@@ -1,7 +1,6 @@
 # Foundation-model embeddings in a differentiable hydrologic model
 
-Code for `<PAPER TITLE>`, `<AUTHORS>`, `<VENUE/YEAR>`.
-
+Code for A Landscape Representation Learning Model Improves Parameterization and Internal States of a Differentiable Hydrologic Model
 A modified copy of [𝛿MG](https://github.com/mhpi/generic_deltamodel), adapted
 so a differentiable rainfall-runoff model can take pretrained foundation-model
 embeddings as input.
@@ -85,7 +84,6 @@ raising.
 
 Please cite the paper, and 𝛿MG:
 
-> `<PAPER CITATION>`
 
 > Shen, C., Appling, A.P., Gentine, P. et al. Differentiable modelling to unify
 > machine learning and physical models for geosciences. *Nat Rev Earth Environ*
