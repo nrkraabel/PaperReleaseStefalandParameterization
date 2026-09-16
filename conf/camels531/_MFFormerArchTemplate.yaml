@@ -1,0 +1,47 @@
+# Not a runnable dmg experiment config -- loaded directly by
+# scripts/generate_embeddings.py (plain OmegaConf.load, not Hydra) purely
+# for its model.nn architecture fields and pretrained_model checkpoint path.
+#
+# conf/HBVGlobalMFFormerRechargeSMSpatialTest.yaml's pretrained_time_series_vars
+# (6 vars, incl. Runoff) and pretrained_static_vars (22 vars) do NOT match what
+# MfformerGlobal20.pt was actually pretrained on -- confirmed by inspecting the
+# checkpoint's own per-variable embedding submodule names
+# (time_series_embedding.embeddings1.<var>, static_embedding.numerical_embeddings1.<var>),
+# which are the ground truth for which variables the frozen encoder can
+# actually load weights for. The lists below are read directly off the
+# checkpoint (5 ts vars, 48 static vars, no categorical vars, no Runoff) and
+# combined with the MFFormerDecLSTM architecture (not StefaLandPatchTFT --
+# see direct_finetuneing.py's build_pretrained_encoder) give an exact
+# 485/485 name+shape parameter match. If conf/HBVGlobalMFFormerRechargeSMSpatialTest.yaml
+# is used for training elsewhere, it likely has this same var-list mismatch.
+model:
+  nn:
+    hidden_size: 256
+    num_heads: 4
+    num_enc_layers: 4
+    d_ffd: 512
+    dropout: 0.1
+
+    pretrained_type: mfformer
+    pretrained_model: ${oc.env:DMG_CHECKPOINT_ROOT}/MfformerGlobal20.pt
+
+    pretrained_time_series_vars: [P, RelHum, SWd, Tmax, Tmin]
+    pretrained_static_vars: [
+      ETPOT_Hargr, GMTED_aspectcosine, GMTED_elevation, GMTED_slope,
+      HWSD_clay, HWSD_gravel, HWSD_sand, HWSD_silt,
+      MODIS_NDVI, MSWEP_P, MSWX_LWd, MSWX_PET, MSWX_RH, MSWX_SWd,
+      MSWX_SpecHum, MSWX_Tmax, MSWX_Tmean, MSWX_Tmin, MSWX_Wind,
+      Permeability_no_permafrost,
+      SoilGrid2_bulk_density, SoilGrid2_clay, SoilGrid2_organic_carbon_stock,
+      SoilGrid2_sand, SoilGrid2_silt,
+      agriculture_fraction_2000, agriculture_fraction_2018,
+      carbonate_sedimentary_rocks_frac, catchsize,
+      forest_fraction_2000, forest_fraction_2018,
+      gdp_2000_buffer,
+      grassland_fraction_2000, grassland_fraction_2018,
+      intact_forest, meanP, meanTa,
+      population_density_2000_buffer, porosity,
+      seasonality_P, seasonality_PET,
+      snow_fraction, snowfall_fraction, soil_depth, soil_erosion, soil_moisture,
+      urban_fraction_2000, urban_fraction_2018,
+    ]

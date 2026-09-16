@@ -1,0 +1,157 @@
+# @package _global_
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: camels_531
+
+name: ${observations.name}/${model.nn.name}/${test.name}alphaearth
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: NnDualLoader
+data_sampler: HydroSampler
+trainer: Trainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/LSTMAlphaEarthHBV/
+# AlphaEarth static attributes (ae_00..ae_63) merged onto a full copy of
+# Camels_Pretrain.nc (scripts/data_prep/merge_alphaearth_camels_pretrain.py), so forcings
+# here are bit-identical to every other Camels_Pretrain.nc-based config in this
+# folder rather than the different NLDAS-extended product in
+# CAMELS_Frederik_with_alphaearth.nc.
+data_path: ${oc.env:DMG_DATA_ROOT}/Camels_Pretrain_AlphaEarth.nc
+pretrained_path: ${oc.env:DMG_DATA_ROOT}/CamelsPretrain/Camels_refpoints_1979_2014.nc
+
+
+## Training ------------------------------#
+train:
+  start_time: 1980/10/01
+  end_time: 1999/09/30
+  target: [QObs]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1995/10/01
+  end_time: 1999/09/30
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial      # dispatches to run_spatial_testing()
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4,5,6,7,8,9] # List based on region config (0-6 PUR, 0-10 PUB)
+
+  # Region Configuration for PUR (only needed when extent is PUR)
+  huc_regions:
+      - [1, 2]
+      - [3, 6]
+      - [4, 5, 7]
+      - [9, 10]
+      - [8, 11, 12, 13]
+      - [14, 15, 16, 18]
+      - [17]
+
+  # Region config for PUB (only needed when extent is PUB)
+  PUB_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2001/01/01
+  end_time: 2001/12/31
+  batch_size: 531
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_1_1p_Triton]  # Hbv, Hbv_1_1p, Hbv_2, Prms, SacsmaSnow
+    nmul: 16
+    warmup_states: True  # If False, tracking gradient from spin-up.
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_1_1p_Triton: [parBETA, parK0, parBETAET]  # parBETA, parK0, parUZL, parBETAET
+
+    routing: True
+    nearzero: 1e-5
+
+    # NnDualLoader derives [prcp, tmean, pet] on the fly from raw_forcings
+    # (tmean = (Tmax+Tmin)/2, pet = Hargreaves-Samani using the radiation
+    # var) -- same raw_forcings EmbeddingPUB531.yaml uses against
+    # Camels_Pretrain.nc.
+    forcings: [
+      prcp,
+      tmean,
+      pet,
+    ]
+    raw_forcings: [P, Tmax, Tmin, srad_daymet]
+    attributes: []
+
+  nn:
+    name: CudnnLstmModel
+    hidden_size: 256
+    dropout: 0.1
+
+    forcings: [
+      P,
+      srad_daymet,
+      Tmax,
+      Tmin,
+      vp_daymet,
+    ]
+    attributes: [
+      meanelevation,
+      meanslope,
+      area_gages2,
+      forest_frac,
+      lai_max,
+      lai_diff,
+      gvf_max,
+      gvf_diff,
+      soil_depth,
+      soil_depth_statsgo,
+      porosity,
+      soil_conductivity,
+      max_water_content,
+      HWSD_sand,
+      HWSD_silt,
+      HWSD_clay,
+      carbonate_sedimentary_rocks_frac,
+      permeability,
+      meanP,
+      pet_mean,
+      aridity,
+      snowfall_fraction,
+      high_prec_freq,
+      high_prec_dur,
+      low_prec_freq,
+      low_prec_dur,
+      # AlphaEarth satellite-embedding attributes (64-dim, static per basin)
+      ae_00, ae_01, ae_02, ae_03, ae_04, ae_05, ae_06, ae_07,
+      ae_08, ae_09, ae_10, ae_11, ae_12, ae_13, ae_14, ae_15,
+      ae_16, ae_17, ae_18, ae_19, ae_20, ae_21, ae_22, ae_23,
+      ae_24, ae_25, ae_26, ae_27, ae_28, ae_29, ae_30, ae_31,
+      ae_32, ae_33, ae_34, ae_35, ae_36, ae_37, ae_38, ae_39,
+      ae_40, ae_41, ae_42, ae_43, ae_44, ae_45, ae_46, ae_47,
+      ae_48, ae_49, ae_50, ae_51, ae_52, ae_53, ae_54, ae_55,
+      ae_56, ae_57, ae_58, ae_59, ae_60, ae_61, ae_62, ae_63,
+    ]

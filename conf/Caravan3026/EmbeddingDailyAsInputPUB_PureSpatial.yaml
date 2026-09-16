@@ -1,0 +1,156 @@
+# @package _global_
+#
+# ABLATION 3 of 3 on EmbeddingDailyPUB_PureSpatial: daily embedding used as
+# ordinary LSTM input channels, replacing the task's static attributes.
+#
+# The 128-d daily embedding is concatenated to the 7 task forcings and fed
+# straight into the LSTM decoder (nx = 128 + 7 = 135); the adapter and the
+# residual-LSTM path are gone, and the 22 static attributes are loaded but
+# never reach the network. See ablation_mode in
+# src/dmg/models/neural_networks/embedding_finetuneing.py.
+#
+# Structurally this is the LSTMHBVPUB_PureSpatial baseline (CudnnLstm over
+# forcings + a basin-identity block -> HBV parameters) with the static
+# attribute block swapped for the embedding. That is the comparison it is
+# built for: does a learned daily embedding carry the basin information the
+# hand-picked Caravan attributes were supplying, given no adapter to
+# reconcile the two?
+#
+# The embedding stays daily here -- it is not collapsed to a per-basin vector
+# -- so it enters as a time-varying channel even though it is standing in for
+# static inputs.
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: caravan3026_official
+
+name: ${observations.name}/${model.nn.name}/daily_asinput/${test.name}/pure_spatial
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: EmbeddingFinetuneLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
+data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_daily128_embedding.nc
+
+
+## Training ------------------------------#
+train:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  target: [streamflow]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4]
+
+  huc_regions:
+      - [1]
+      - [2]
+      - [3]
+      - [4]
+
+  PUB_ids: [1, 2, 3, 4, 5]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2008/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_1_1p_Triton]
+    nmul: 16
+    warmup_states: True
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_1_1p_Triton: [parBETA, parK0, parBETAET]
+
+    routing: True
+    nearzero: 1e-5
+
+    forcings: [prcp, tmean, pet]
+    raw_forcings: [
+      total_precipitation_sum,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: []
+
+  nn:
+    name: EmbeddingFinetuneing
+    out_size: 1
+
+    embedding_size: 128
+    embedding_var_name: embedding
+    dropout: 0.1
+
+    # THE ABLATION.
+    ablation_mode: embedding_as_input
+
+    # Both ignored under embedding_as_input (no adapter is built, and the
+    # residual path is what would have re-injected the static attributes).
+    # Kept explicit so the diff against the baseline reads as a switch-off.
+    adapter_type: none
+    use_residual_lstm: False
+    lstm_hidden_size: 256
+
+    forcings: [
+      total_precipitation_sum,
+      temperature_2m_mean,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      surface_pressure_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    # Loaded but NOT fed to the network -- the embedding replaces them. Kept
+    # identical to the baseline so normalization statistics and the PUB basin
+    # splits match the runs this is compared against.
+    attributes: [
+      lat, lon, area,
+      ele_mt_sav, slp_dg_sav,
+      for_pc_sse,
+      cly_pc_sav, snd_pc_sav, slt_pc_sav, swc_pc_syr, soc_th_sav,
+      kar_pc_sse,
+      p_mean, pet_mean_FAO_PM, aridity_FAO_PM, seasonality_FAO_PM,
+      frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur,
+      moisture_index_FAO_PM,
+    ]

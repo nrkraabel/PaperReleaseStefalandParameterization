@@ -1,0 +1,135 @@
+defaults:
+  - _self_
+  - hydra: settings
+  - observations: hf22
+
+name: ${model.nn.name}-${model.phy.name}
+exp_name: null
+
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+
+seed: 111111
+logging: tensorboard  # tensorboard, wandb, None
+cache_states: False
+device: cuda
+gpu_id: 2
+
+data_loader: MsHydroLoader
+data_sampler: MsHydroSampler
+trainer: MsTrainer
+
+# model_dir:
+
+
+## Training ------------------------------#
+train:
+  start_time: 1980/10/01
+  end_time: 1995/09/30
+  target: [streamflow]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: NseBatchLoss
+  use_amp: True  # Mixed prec (autocast + GradScaler).
+
+  batch_size: 100
+  n_test_gages: 2700  # Remove or set to null to use all gages.
+  max_cat_size: 49950  # Cap cats per batch. MERIT: 10590, HF22: 49950, Debug: 500
+  pad_batch: True  # Pad catchment dim to max_cat_size for fixed-shape batches.
+  epochs: 100
+  start_epoch: 0
+  save_epoch: 1
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1980/10/01
+  end_time: 1995/09/30
+  batch_size: 15000  # Max total catchments per eval batch. Lower if OOM (e.g. 500).
+  test_epoch: 100
+
+
+## Inference -------------------------------#
+sim:
+  start_time: 1980/10/01
+  end_time: 1995/09/30
+  batch_size: 25
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_2_Triton]
+    nmul: 3
+    warmup_states: True
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_2_Triton: [parBETA, parK0, parBETAET]
+
+    routing: True
+    nearzero: 1e-5
+    all_output: False  # True: full 18-key flux output; False: streamflow + AET only (liberates vram)
+
+    forcings: [
+      P,
+      Temp,
+      PET,
+    ]
+    attributes: []
+
+  nn:
+    name: LstmMlpModel
+    lstm_type: triton  # null (cudnn default), 'triton'
+    mlp_type: triton # null (standard AnnModel), 'triton' (fused kernels - this is slower)
+    n_chunks: 3  # Optimized: 3 chunks = 13% faster than 10. Lower = faster but more VRAM
+
+    lstm_dropout: 0.5
+    lstm_hidden_size: 64
+
+    mlp_dropout: 0.5
+    mlp_hidden_size: 4096
+
+    forcings: [
+      P,
+      Temp,
+      PET,
+    ]
+    attributes: [
+      aridity,
+      meanP,
+      ETPOT_Hargr,
+      NDVI,
+      FW,
+      meanslope,
+      SoilGrids1km_sand,
+      SoilGrids1km_clay,
+      SoilGrids1km_silt,
+      glaciers,
+      HWSD_clay,
+      HWSD_gravel,
+      HWSD_sand,
+      HWSD_silt,
+      meanelevation,
+      meanTa,
+      permafrost,
+      permeability,
+      seasonality_P,
+      seasonality_PET,
+      snow_fraction,
+      snowfall_fraction,
+      T_clay,
+      T_gravel,
+      T_sand,
+      T_silt,
+      Porosity,
+      uparea,
+    ]

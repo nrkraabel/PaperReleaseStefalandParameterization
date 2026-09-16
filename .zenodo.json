@@ -1,0 +1,29 @@
+{
+  "title": "Foundation-model embeddings in a differentiable hydrologic model",
+  "description": "<p>A modified copy of the &delta;MG differentiable modeling framework, adapted so that a differentiable rainfall-runoff model can take pretrained foundation-model embeddings as input. The frozen encoder is run once over the forcing record, the embedding is stored and optionally compressed by a learned condenser, and it is then fed to the HBV parameterization network through a small trainable adapter.</p><p>Includes the four-stage offline embedding pipeline, the CAMELS-531 and Caravan-3026 experiment configurations covering every component and ablation in the paper, three-seed SLURM job scripts, and the analysis scripts that produce the figures and tables.</p><p>Upstream framework: <a href=\"https://github.com/mhpi/generic_deltamodel\">mhpi/generic_deltamodel</a>. See CHANGES_VS_DMG.md for the file-level differences.</p>",
+  "upload_type": "software",
+  "license": "other-nc",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Kraabel, Nicholas Ridgeway",
+      "affiliation": "The Pennsylvania State University"
+    }
+  ],
+  "keywords": [
+    "differentiable modeling",
+    "hydrology",
+    "foundation models",
+    "streamflow",
+    "prediction in ungauged basins",
+    "CAMELS",
+    "Caravan"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/mhpi/generic_deltamodel",
+      "relation": "isDerivedFrom",
+      "scheme": "url"
+    }
+  ]
+}

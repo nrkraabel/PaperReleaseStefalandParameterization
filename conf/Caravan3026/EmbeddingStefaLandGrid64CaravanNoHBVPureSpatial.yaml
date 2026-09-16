@@ -1,0 +1,114 @@
+# @package _global_
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: caravan3026_official
+
+name: ${observations.name}/${model.nn.name}-direct/${model.nn.adapter_type}/annual/${test.name}/pure_spatial
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+
+data_loader: EmbeddingFinetuneLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
+data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/StefaLandGridAnnual64/Caravan3026_StefaLandGridAnnual64_embeddings_annual.nc
+
+## Training ------------------------------#
+train:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  target: [streamflow]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4]
+
+  huc_regions:
+      - [1]
+      - [2]
+      - [3]
+      - [4]
+
+  PUB_ids: [1, 2, 3, 4, 5]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2001/01/01
+  end_time: 2001/12/31
+  batch_size: 531
+
+
+## Neural Network Model (no HBV physics) --------------#
+# See EmbeddingDailyNoHBVPUB_PureSpatial.yaml for the rationale: model.phy
+# is removed so ModelHandler builds a plain NnModel and EmbeddingFinetuneing's
+# projection output is the final streamflow prediction directly.
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  nn:
+    name: EmbeddingFinetuneing
+    out_size: 1
+
+    embedding_size: 64
+    embedding_var_name: embedding
+    dropout: 0.1
+
+    adapter_type: dual_residual
+    adapter_params:
+      dropout: 0.1
+      combined_dropout: 0.2
+      hidden_multiplier: 2
+
+    use_residual_lstm: True
+    lstm_hidden_size: 256
+
+    forcings: [
+      total_precipitation_sum,
+      temperature_2m_mean,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      surface_pressure_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: [
+      lat, lon, area,
+      ele_mt_sav, slp_dg_sav,
+      for_pc_sse,
+      cly_pc_sav, snd_pc_sav, slt_pc_sav, swc_pc_syr, soc_th_sav,
+      kar_pc_sse,
+      p_mean, pet_mean_FAO_PM, aridity_FAO_PM, seasonality_FAO_PM,
+      frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur,
+      moisture_index_FAO_PM,
+    ]

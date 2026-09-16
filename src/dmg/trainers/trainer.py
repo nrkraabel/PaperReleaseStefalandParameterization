@@ -1,0 +1,711 @@
+import gc
+import logging
+import os
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import tqdm
+from numpy.typing import NDArray
+
+from dmg.core.calc.metrics import Metrics
+from dmg.core.data import create_training_grid
+from dmg.core.utils.factory import import_data_sampler, load_criterion
+from dmg.core.utils.utils import save_outputs, save_train_state
+from dmg.models.model_handler import ModelHandler
+from dmg.trainers.base import BaseTrainer
+
+log = logging.getLogger('trainer')
+
+
+# try:
+#     from ray import tune
+#     from ray.air import Checkpoint
+# except ImportError:
+#     log.warning('Ray Tune is not installed or is misconfigured. Tuning will be disabled.')
+
+
+class Trainer(BaseTrainer):
+    """Generic, unified trainer for neural networks and differentiable models.
+
+    Inspired by the Hugging Face Trainer class.
+
+    Retrieves and formats data, initializes optimizers/schedulers/loss functions,
+    and runs training and testing/inference loops.
+
+    Parameters
+    ----------
+    config
+        Configuration settings for the model and experiment.
+    model
+        Learnable model object. If not provided, a new model is initialized.
+    train_dataset
+        Training dataset dictionary.
+    eval_dataset
+        Testing/inference dataset dictionary.
+    dataset
+        Inference dataset dictionary.
+    loss_func
+        Loss function object. If not provided, a new loss function is initialized.
+    optimizer
+        Optimizer object for learning model states. If not provided, a new
+        optimizer is initialized.
+    scheduler
+        Learning rate scheduler. If not provided, a new scheduler is initialized.
+    write_out
+        Whether to save model outputs and metrics to disk.
+    verbose
+        Whether to print verbose output.
+
+    TODO: Incorporate support for validation loss and early stopping in
+    training loop. This will also enable using ReduceLROnPlateau scheduler.
+    """
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        model: torch.nn.Module = None,
+        train_dataset: Optional[dict] = None,
+        eval_dataset: Optional[dict] = None,
+        dataset: Optional[dict] = None,
+        loss_func: Optional[torch.nn.Module] = None,
+        optimizer: Optional[torch.optim.Optimizer] = None,
+        scheduler: Optional[torch.nn.Module] = None,
+        write_out: Optional[bool] = True,
+        verbose: Optional[bool] = False,
+    ) -> None:
+        self.config = config
+        self.model = model or ModelHandler(config, verbose=verbose)
+        self.train_dataset = train_dataset
+        self.eval_dataset = eval_dataset
+        self.dataset = dataset
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.write_out = write_out
+        self.verbose = verbose
+        self.sampler = import_data_sampler(config['data_sampler'])(config)
+        self.is_in_train = False
+        self.exp_logger = None
+
+        if 'train' in config['mode']:
+            if not self.train_dataset:
+                raise ValueError("'train_dataset' required for training mode.")
+
+            log.info("Initializing experiment")
+            self.epochs = self.config['train']['epochs']
+
+            # Loss function
+            self.loss_func = loss_func or load_criterion(
+                self.train_dataset['target'],
+                config['train']['loss_function'],
+                device=config['device'],
+            )
+            self.model.loss_func = self.loss_func
+
+            # Pass basin observation stds to MoE.
+            if hasattr(self.model, 'moe') and hasattr(self.loss_func, 'std'):
+                moe = self.model.moe
+                if (
+                    getattr(moe, 'q_norm', 'none') == 'basin_std'
+                    or getattr(moe, 'oracle_metric', 'mse') == 'nse'
+                    or getattr(moe, '_mcl_oracle_metric', 'mse') == 'nse'
+                ):
+                    moe._basin_obs_std = torch.tensor(
+                        self.loss_func.std,
+                        dtype=torch.float32,
+                        device=config['device'],
+                    )
+
+            # MCL: instantiate per-expert loss functions if configured.
+            if hasattr(self.model, 'moe') and self.model.moe._use_mcl:
+                moe = self.model.moe
+                if moe._expert_loss_config:
+                    expert_loss_fns = {}
+                    for ename, loss_name in moe._expert_loss_config.items():
+                        expert_loss_fns[ename] = load_criterion(
+                            self.train_dataset['target'],
+                            {'name': loss_name},
+                            device=config['device'],
+                        )
+                    moe.set_expert_loss_fns(expert_loss_fns)
+
+            # Optimizer and learning rate scheduler
+            self.optimizer = optimizer or self.init_optimizer()
+            if config['train']['lr_scheduler']:
+                self.use_scheduler = True
+                self.scheduler = scheduler or self.init_scheduler()
+            else:
+                self.use_scheduler = False
+
+            # Resume model training by loading prior states.
+            self.start_epoch = self.config['train']['start_epoch'] + 1
+            if self.start_epoch > 1:
+                self.load_states()
+
+            self._init_loggers()
+            self._init_loss_tracking()
+
+    def _init_loss_tracking(self) -> None:
+        """Initialize loss history lists and CSV log file."""
+        self.train_loss_history: list[float] = []
+        self.loss_component_history: dict[str, list[float]] = {}
+
+        if self.write_out:
+            self.plot_dir = self.config['plot_dir']
+
+            self.csv_log_file = os.path.join(
+                self.config['output_dir'], 'training_log.csv'
+            )
+            with open(self.csv_log_file, 'w') as f:
+                f.write('epoch,batch,loss,time_s,gpu_mem_mb\n')
+
+    def init_optimizer(self) -> torch.optim.Optimizer:
+        """Initialize a state optimizer.
+
+        Adding additional optimizers is possible by extending the optimizer_dict.
+
+        Returns
+        -------
+        torch.optim.Optimizer
+            Initialized optimizer object.
+        """
+        name = self.config['train']['optimizer']['name']
+        learning_rate = self.config['train']['lr']
+        optimizer_dict = {
+            'SGD': torch.optim.SGD,
+            'Adam': torch.optim.Adam,
+            'AdamW': torch.optim.AdamW,
+            'Adadelta': torch.optim.Adadelta,
+            'RMSprop': torch.optim.RMSprop,
+        }
+
+        # Fetch optimizer class
+        cls = optimizer_dict[name]
+        if cls is None:
+            raise ValueError(
+                f"Optimizer '{name}' not recognized. "
+                f"Available options are: {list(optimizer_dict.keys())}",
+            )
+
+        # Initialize
+        opt_kwargs = {
+            k: v for k, v in self.config['train']['optimizer'].items() if k != 'name'
+        }
+        try:
+            self.optimizer = cls(
+                self.model.get_parameters(),
+                lr=learning_rate,
+                **opt_kwargs,
+            )
+        except RuntimeError as e:
+            raise RuntimeError(f"Error initializing optimizer: {e}") from e
+        return self.optimizer
+
+    def init_scheduler(self) -> torch.optim.lr_scheduler.LRScheduler:
+        """Initialize a learning rate scheduler for the optimizer.
+
+        torch.optim.lr_scheduler.LRScheduler
+            Initialized learning rate scheduler object.
+        """
+        params = self.config['train']['lr_scheduler'].copy()
+        name = params.pop('name')
+        scheduler_dict = {
+            'StepLR': torch.optim.lr_scheduler.StepLR,
+            'ExponentialLR': torch.optim.lr_scheduler.ExponentialLR,
+            # 'ReduceLROnPlateau': torch.optim.lr_scheduler.ReduceLROnPlateau,
+            'CosineAnnealingLR': torch.optim.lr_scheduler.CosineAnnealingLR,
+        }
+
+        # Fetch scheduler class
+        cls = scheduler_dict.get(name)
+        if cls is None:
+            raise ValueError(
+                f"Scheduler '{name}' not recognized. "
+                f"Available options are: {list(scheduler_dict.keys())}",
+            )
+
+        # Initialize
+        try:
+            self.scheduler = cls(self.optimizer, **params)
+        except RuntimeError as e:
+            raise RuntimeError(f"Error initializing scheduler: {e}") from e
+        return self.scheduler
+
+    def load_states(self) -> None:
+        """
+        Load model, optimizer, and scheduler states from a checkpoint to resume
+        training if a checkpoint file exists.
+        """
+        path = self.config['model_dir']
+        for file in os.listdir(path):
+            # Check for state checkpoint: looks like `train_state_epoch_XX.pt`.
+            if ('train_state' in file) and (str(self.start_epoch - 1) in file):
+                log.info(
+                    "Loading trainer states --> Resuming Training from"
+                    / f" epoch {self.start_epoch}",
+                )
+
+                checkpoint = torch.load(os.path.join(path, file))
+
+                # Restore optimizer states
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                if self.scheduler:
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+                # Restore random states
+                torch.set_rng_state(checkpoint['random_state'])
+                if torch.cuda.is_available() and 'cuda_random_state' in checkpoint:
+                    torch.cuda.set_rng_state_all(checkpoint['cuda_random_state'])
+                return
+            elif 'train_state' in file:
+                raise FileNotFoundError(
+                    f"Available checkpoint file {file} does"
+                    / f" not match start epoch {self.start_epoch - 1}.",
+                )
+
+        # If no checkpoint file is found for named epoch...
+        raise FileNotFoundError(f"No checkpoint for epoch {self.start_epoch - 1}.")
+
+    def train(self) -> None:
+        """Train the model."""
+        self.is_in_train = True
+
+        # Setup a training grid (number of samples, minibatches, and timesteps)
+        n_samples, n_minibatch, n_timesteps = create_training_grid(
+            self.train_dataset['xc_nn_norm'],
+            self.config,
+        )
+
+        log.info(
+            f"Training model: {self.start_epoch} to {self.epochs} epochs, "
+            f"{n_minibatch} iter/ep, {n_samples} gages",
+        )
+
+        # Training loop
+        for epoch in range(self.start_epoch, self.epochs + 1):
+            # Disable garbage collection during training for performance
+            gc.collect()
+            gc.disable()
+
+            self._train_one_epoch(
+                epoch,
+                n_samples,
+                n_minibatch,
+                n_timesteps,
+            )
+
+            # Re-enable garbage collection
+            gc.enable()
+            gc.collect()
+
+        self.exp_logger.finalize()
+
+    def _plot_loss_curves(self) -> None:
+        """Generate and save training loss plots (linear and log scale)."""
+        if not self.train_loss_history:
+            return
+
+        epochs = range(1, len(self.train_loss_history) + 1)
+        save_path = Path(self.plot_dir) / 'loss_plot.png'
+
+        multi_model = len(self.loss_component_history) > 1
+
+        for log_scale, suffix in [(False, ''), (True, '_log')]:
+            fig, ax = plt.subplots(figsize=(10, 6))
+
+            ax.plot(
+                epochs,
+                self.train_loss_history,
+                label='Total Loss' if multi_model else None,
+                color='blue',
+                linewidth=1.5,
+            )
+
+            if multi_model:
+                colors = ['orange', 'green', 'red', 'purple', 'brown']
+                for i, (name, losses) in enumerate(self.loss_component_history.items()):
+                    ax.plot(
+                        epochs,
+                        losses,
+                        label=name,
+                        color=colors[i % len(colors)],
+                        linewidth=1.5,
+                        linestyle='--',
+                    )
+
+            title = 'Training Loss'
+            if log_scale:
+                ax.set_yscale('log')
+                title += ' (Log Scale)'
+                ax.grid(True, which='both', ls='--', linewidth=0.5, alpha=0.7)
+            else:
+                ax.grid(True, ls='--', linewidth=0.5, alpha=0.7)
+
+            ax.set_title(title, fontsize=14)
+            ax.set_xlabel('Epoch', fontsize=12)
+            ax.set_ylabel('Loss', fontsize=12)
+            if multi_model:
+                ax.legend(loc='upper right', fontsize=10)
+            fig.tight_layout()
+
+            out = save_path.with_stem(f"{save_path.stem}{suffix}")
+            fig.savefig(out, dpi=150)
+            plt.close(fig)
+
+    def _train_one_epoch(self, epoch, n_samples, n_minibatch, n_timesteps) -> None:
+        """Train model for one epoch.
+
+        Parameters
+        ----------
+        epoch
+            Current epoch number.
+        n_samples
+            Number of samples in the training dataset.
+        n_minibatch
+            Number of minibatches (iterations) per epoch.
+        n_timesteps
+            Number of timesteps in the training dataset.
+        """
+        start_time = time.perf_counter()
+
+        self.current_epoch = epoch
+        self.total_loss = 0.0
+
+        # MoE temperature annealing and phased training.
+        if hasattr(self.model, 'moe'):
+            if hasattr(self.model.moe, 'anneal_temperature'):
+                self.model.moe.anneal_temperature(epoch)
+            if hasattr(self.model.moe, 'update_phase'):
+                self.model.moe.update_phase(epoch)
+
+        if hasattr(self.model, 'loss_dict'):
+            for key in self.model.loss_dict:
+                self.model.loss_dict[key] = 0.0
+
+        prog_bar = tqdm.tqdm(
+            range(1, n_minibatch + 1),
+            desc=f"Epoch {epoch}/{self.epochs}",
+            leave=False,
+            dynamic_ncols=True,
+        )
+
+        # Iterate through epoch in minibatches.
+        for mb in prog_bar:
+            self.current_batch = mb
+            batch_start = time.perf_counter()
+
+            dataset_sample = self.sampler.get_training_sample(
+                self.train_dataset,
+                n_samples,
+                n_timesteps,
+            )
+
+            # Model forward
+            _ = self.model(dataset_sample)
+            loss = self.model.calc_loss(dataset_sample)
+
+            loss.backward()
+
+            # Gradient clipping (optional)
+            grad_threshold = self.config.get('train', {}).get('grad_threshold', 0)
+            if grad_threshold > 0:
+                clip_params = getattr(
+                    self.model,
+                    '_flat_parameters',
+                    self.model.get_parameters(),
+                )
+                torch.nn.utils.clip_grad_norm_(
+                    clip_params,
+                    grad_threshold,
+                )
+
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+
+            batch_loss = loss.item()
+            self.total_loss += batch_loss
+
+            if self.write_out:
+                batch_elapsed = time.perf_counter() - batch_start
+                mem = 0
+                if self.config['device'] != 'cpu':
+                    mem = int(
+                        torch.cuda.memory_reserved(device=self.config['device']) * 1e-6
+                    )
+                with open(self.csv_log_file, 'a') as f:
+                    f.write(
+                        f"{epoch},{mb},{batch_loss:.6f},{batch_elapsed:.2f},{mem}\n"
+                    )
+
+        if self.use_scheduler:
+            self.scheduler.step()
+
+        if self.verbose:
+            log.info(
+                f"\n ---- \n Epoch {epoch} | Total Loss {self.total_loss} | Avg Loss {self.total_loss / n_minibatch:.6f} \n ---- \n"
+            )
+        self._log_epoch_stats(epoch, self.model.loss_dict, n_minibatch, start_time)
+
+        # Save model and trainer states.
+        if (epoch % self.config['train']['save_epoch'] == 0) and self.write_out:
+            self.model.save_model(epoch)
+            save_train_state(
+                self.config['model_dir'],
+                epoch=epoch,
+                optimizer=self.optimizer,
+                scheduler=self.scheduler,
+                clear_prior=True,
+            )
+
+            # if self.config['do_tune']:
+            #     # Create temporary checkpoint if needed
+            #     chkpt = None
+            #     if epoch % self.calc_metricsconfig['tune']['save_epoch'] == 0:
+            #         with tempfile.TemporaryDirectory() as temp_dir:
+            #             model_path = os.path.join(temp_dir, "model_ep{epoch}.pt")
+            #             torch.save(self.model.state_dict(), model_path)
+            #             chkpt = Checkpoint.from_directory(temp_dir)
+
+            #     # Report to Ray Tune
+            #     tune.report(loss=self.total_loss, checkpoint=chkpt)
+
+    def evaluate(self) -> None:
+        """Run model evaluation and return both metrics and model outputs."""
+        self.is_in_train = False
+
+        # Track overall predictions and observations
+        batch_predictions = []
+        observations = self.eval_dataset['target']
+
+        # Get start and end indices for each batch
+        n_samples = self.eval_dataset['xc_nn_norm'].shape[1]
+        batch_start = np.arange(0, n_samples, self.config['test']['batch_size'])
+        batch_end = np.append(batch_start[1:], n_samples)
+
+        # Model forward
+        log.info(f"Validating Model: Forwarding {len(batch_start)} batches")
+        batch_predictions = self._forward_loop(
+            self.eval_dataset,
+            batch_start,
+            batch_end,
+        )
+
+        # Save preds + calc metrics
+        log.info("Saving model outputs + Calculating metrics")
+        save_outputs(self.config, batch_predictions, observations)
+        try:
+            self.model.save_states()
+        except NotImplementedError:
+            log.debug("Skipping state saving (not supported for this model type)")
+        self.predictions = self._batch_data(batch_predictions)
+
+        # Calculate metrics
+        self.calc_metrics(batch_predictions, observations)
+
+    def inference(self) -> None:
+        """Run batch model inference and save model outputs."""
+        self.is_in_train = False
+
+        # Track overall predictions
+        batch_predictions = []
+
+        # Get start and end indices for each batch
+        n_samples = self.dataset['xc_nn_norm'].shape[1]
+        batch_start = np.arange(0, n_samples, self.config['sim']['batch_size'])
+        batch_end = np.append(batch_start[1:], n_samples)
+
+        # Model forward
+        log.info(f"Inference: Forwarding {len(batch_start)} batches")
+        batch_predictions = self._forward_loop(self.dataset, batch_start, batch_end)
+
+        # Save predictions
+        log.info("Saving model outputs")
+        save_outputs(self.config, batch_predictions)
+        self.model.save_states()
+        self.predictions = self._batch_data(batch_predictions)
+
+        return self.predictions
+
+    def _batch_data(
+        self,
+        batch_list: list[dict[str, torch.Tensor]],
+        target_key: str = None,
+    ) -> None:
+        """Merge batch data into a single dictionary.
+
+        Parameters
+        ----------
+        batch_list
+            list of dictionaries from each forward batch containing inputs and
+            model predictions.
+        target_key
+            Key to extract from each batch dictionary.
+        """
+        data = {}
+        try:
+            if target_key:
+                return torch.cat([x[target_key] for x in batch_list], dim=1).numpy()
+
+            for key in batch_list[0].keys():
+                # Handle None values and variable dimensions across batches.
+                if batch_list[0][key] is None:
+                    data[key] = None
+                    continue
+                if len(batch_list[0][key].shape) == 3:
+                    dim = 1
+                else:
+                    dim = 0
+                data[key] = (
+                    torch.cat([d[key] for d in batch_list], dim=dim).cpu().numpy()
+                )
+            return data
+
+        except ValueError as e:
+            raise ValueError(f"Error concatenating batch data: {e}") from e
+
+    def _forward_loop(
+        self,
+        data: dict[str, torch.Tensor],
+        batch_start: NDArray,
+        batch_end: NDArray,
+    ) -> None:
+        """Forward loop used in model evaluation and inference.
+
+        Parameters
+        ----------
+        data
+            dictionary containing model input data.
+        batch_start
+            Start indices for each batch.
+        batch_end
+            End indices for each batch.
+        """
+        # Track predictions accross batches
+        batch_predictions = []
+
+        prog_bar = tqdm.tqdm(
+            range(len(batch_start)),
+            desc='Forwarding',
+            leave=False,
+            dynamic_ncols=True,
+        )
+
+        for mb in prog_bar:
+            # Select a batch of data
+            dataset_sample = self.sampler.get_validation_sample(
+                data,
+                batch_start[mb],
+                batch_end[mb],
+            )
+
+            prediction = self.model(dataset_sample, eval=True)
+
+            prediction = {
+                key: tensor.detach().cpu() if tensor is not None else None
+                for key, tensor in prediction[self.model.models[0]].items()
+            }
+            batch_predictions.append(prediction)
+        return batch_predictions
+
+    def calc_metrics(
+        self,
+        batch_predictions: list[dict[str, torch.Tensor]],
+        observations: torch.Tensor,
+    ) -> None:
+        """Calculate and save model performance metrics.
+
+        Parameters
+        ----------
+        batch_predictions
+            list of dictionaries containing model predictions.
+        observations
+            Target variable observation data.
+        """
+        target_name = self.model.resolve_target_key(batch_predictions[0].keys())
+        warmup = self.config['model'].get('warmup', 0)
+        predictions = self._batch_data(batch_predictions, target_name)
+        target = np.expand_dims(observations[:, :, 0].cpu().numpy(), 2)
+
+        target = target[warmup:, :]
+
+        # Denormalization for ML model outputs.
+        denorm_fn = self.eval_dataset.get('denorm_fn')
+        if denorm_fn is not None:
+            predictions = denorm_fn(predictions)
+
+        # Compute metrics
+        metrics = Metrics(
+            np.swapaxes(predictions.squeeze(), 1, 0),
+            np.swapaxes(target.squeeze(), 1, 0),
+        )
+
+        # Save all metrics and aggregated statistics.
+        metrics.dump_metrics(self.config['output_dir'])
+
+    def _log_epoch_stats(
+        self,
+        epoch: int,
+        loss_dict: dict[str, float],
+        n_minibatch: int,
+        start_time: float,
+    ) -> None:
+        """Log statistics after each epoch.
+
+        Parameters
+        ----------
+        epoch
+            Current epoch number.
+        loss_dict
+            dictionary containing loss values.
+        n_minibatch
+            Number of minibatches.
+        start_time
+            Start time of the epoch.
+        """
+        avg_loss_dict = {key: value / n_minibatch for key, value in loss_dict.items()}
+        avg_total_loss = self.total_loss / n_minibatch
+        loss_str = ", ".join(
+            f"{key}: {value:.6f}" for key, value in avg_loss_dict.items()
+        )
+        elapsed = time.perf_counter() - start_time
+        mem_aloc = 0
+
+        if self.config['device'] != 'cpu':
+            mem_aloc = int(
+                torch.cuda.memory_reserved(device=self.config['device']) * 1e-6,
+            )
+
+        log.debug(
+            f"Loss after epoch {epoch}: {loss_str} \n"
+            f"~ Runtime {elapsed:.2f} s, {mem_aloc} Mb reserved GPU memory",
+        )
+
+        # Track loss history
+        self.train_loss_history.append(avg_total_loss)
+        for model_name, loss_val in avg_loss_dict.items():
+            if model_name not in self.loss_component_history:
+                self.loss_component_history[model_name] = []
+            self.loss_component_history[model_name].append(loss_val)
+
+        # For experiment loggers: create a single dictionary of metrics to log
+        metrics_to_log = {
+            'Loss/train_total': avg_total_loss,
+        }
+        for model_name, loss_val in avg_loss_dict.items():
+            metrics_to_log[f'Loss/{model_name}'] = loss_val
+
+        if self.use_scheduler:
+            metrics_to_log['learning_rate'] = self.scheduler.get_last_lr()[0]
+
+        # Loop through all active loggers and log the metrics
+        self.exp_logger.log_metrics(metrics_to_log, step=epoch)
+
+        # Update loss plots
+        if self.write_out:
+            self._plot_loss_curves()

@@ -1,0 +1,193 @@
+# @package _global_
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: caravan3026_official
+
+name: ${observations.name}/${model.nn.name}NoPretraining/${model.nn.adapter_type}/${test.name}/pure_spatial
+
+## General -------------------------------#
+mode: train_test
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: NnDualLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
+data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
+# This config DOES run data through the MFFormerDecLSTM architecture (just
+# randomly initialized, not loading MfformerGlobal20.pt weights) -- per this
+# repo's rule, pretrained_path IS allowed to point at the foundation-model
+# schema file here (unlike the plain-LSTM/HBV-LSTM baselines, which must
+# never use it). 3026Carvan_refpoints.nc already has a correct station_ids
+# coordinate and the exact P/RelHum/SWd/Tmax/Tmin + 48-static-var schema the
+# MFFormerDecLSTM embedding layers are sized for.
+pretrained_path: ${oc.env:DMG_DATA_ROOT}/CarvanPretrain/3026Carvan_refpoints.nc
+
+
+## Training ------------------------------#
+train:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  target: [streamflow]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4]
+
+  huc_regions:
+      - [1]
+      - [2]
+      - [3]
+      - [4]
+
+  PUB_ids: [1, 2, 3, 4, 5]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2008/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_1_1p_Triton]
+    nmul: 16
+    warmup_states: True
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_1_1p_Triton: [parBETA, parK0, parBETAET]
+
+    routing: True
+    nearzero: 1e-5
+
+    # NnDualLoader always derives HBV's [prcp, tmean, pet] forcings via
+    # Hargreaves-Samani from model.phy.raw_forcings (never by looking up
+    # 'forcings:' names directly in data_path -- that field is just a
+    # semantic label matching this repo's convention). raw_forcings order
+    # is fixed: [P, Tmax, Tmin, radiation].
+    forcings: [prcp, tmean, pet]
+    # 5th element (potential_evaporation_sum_FAO_PENMAN_MONTEITH) is used
+    # as measured PET directly, not Hargreaves-Samani-derived (see
+    # nn_dual_loader.py/embedding_finetune_loader.py: raw_forcings.shape[-1]
+    # >= 5 skips the HS approximation). tmean is still derived from Tmax/Tmin.
+    raw_forcings: [
+      total_precipitation_sum,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: []
+
+  nn:
+    name: DirectFinetuneing
+    use_direct_pretrained_inputs: True
+    debug_encode: True
+    out_size: 1
+
+    hidden_size: 256
+    dropout: 0.1
+
+    num_heads: 4
+    num_enc_layers: 4
+    num_dec_layers: 2
+    d_ffd: 512
+
+    # No pretrained_model line -- random init, not MfformerGlobal20.pt's
+    # weights (see direct_finetuneing.py's _load_pretrained_weights: path
+    # falls to None, logs "using random init").
+    pretrained_type: mfformer
+    freeze_pretrained: False
+
+    adapter_type: dual_residual  # Options: none, gated, feedforward, conv, attention, bottleneck, moe, dual_residual
+    use_residual_lstm: True
+
+    # 'forcings'/'attributes' (unprefixed) are the FINE-TUNING vars -- read
+    # from data_path (this task file) by NnDualLoader, feeding the
+    # adapter+LSTM decoder directly (xc_nn_norm). This is a SEPARATE data
+    # source from pretrained_time_series_vars/pretrained_static_vars below
+    # (which define the frozen/trainable encoder's architecture and are read
+    # from pretrained_path instead) -- see direct_finetuneing.py's
+    # DirectFinetuneing.__init__ (self.finetuning_ts_vars vs.
+    # self.pretrained_ts_vars) and nn_dual_loader.py's _preprocess_data
+    # (self.task_nc_path vs. self.pretrained_nc_path). Same task-file
+    # variable set as the LSTMHBVPUB/LSTMNoHBVPUB baselines' nn block.
+    forcings: [
+      total_precipitation_sum,
+      temperature_2m_mean,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      surface_pressure_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: [
+      lat, lon, area,
+      ele_mt_sav, slp_dg_sav,
+      for_pc_sse,
+      cly_pc_sav, snd_pc_sav, slt_pc_sav, swc_pc_syr, soc_th_sav,
+      kar_pc_sse,
+      p_mean, pet_mean_FAO_PM, aridity_FAO_PM, seasonality_FAO_PM,
+      frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur,
+      moisture_index_FAO_PM,
+    ]
+
+    # These come from pretrained_path (3026Carvan_refpoints.nc), matching
+    # conf/camels531/_MFFormerArchTemplate.yaml's verified
+    # exact-match var list for MfformerGlobal20.pt's architecture (5 ts vars,
+    # 48 static vars, no Runoff) -- NOT the mismatched 6ts/22static list in
+    # conf/HBVGlobalMFFormerRechargeSMSpatialTest.yaml, which that file's own
+    # header comment already flags as wrong for this checkpoint. Defines the
+    # encoder's architecture only -- unrelated to the task-file forcings/
+    # attributes above.
+    pretrained_time_series_vars: [P, RelHum, SWd, Tmax, Tmin]
+    pretrained_static_vars: [
+      ETPOT_Hargr, GMTED_aspectcosine, GMTED_elevation, GMTED_slope,
+      HWSD_clay, HWSD_gravel, HWSD_sand, HWSD_silt,
+      MODIS_NDVI, MSWEP_P, MSWX_LWd, MSWX_PET, MSWX_RH, MSWX_SWd,
+      MSWX_SpecHum, MSWX_Tmax, MSWX_Tmean, MSWX_Tmin, MSWX_Wind,
+      Permeability_no_permafrost,
+      SoilGrid2_bulk_density, SoilGrid2_clay, SoilGrid2_organic_carbon_stock,
+      SoilGrid2_sand, SoilGrid2_silt,
+      agriculture_fraction_2000, agriculture_fraction_2018,
+      carbonate_sedimentary_rocks_frac, catchsize,
+      forest_fraction_2000, forest_fraction_2018,
+      gdp_2000_buffer,
+      grassland_fraction_2000, grassland_fraction_2018,
+      intact_forest, meanP, meanTa,
+      population_density_2000_buffer, porosity,
+      seasonality_P, seasonality_PET,
+      snow_fraction, snowfall_fraction, soil_depth, soil_erosion, soil_moisture,
+      urban_fraction_2000, urban_fraction_2018,
+    ]

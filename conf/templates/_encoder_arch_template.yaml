@@ -1,0 +1,40 @@
+# Stage 0 only (optional) -- NOT a runnable dmg experiment config.
+#
+# Loaded directly by scripts/generate_embeddings.py via plain OmegaConf.load
+# (not Hydra), purely for its model.nn architecture fields, the frozen
+# foundation-model checkpoint path, and the dataset to encode. Skip this
+# file entirely if you already have an embedding NetCDF.
+
+# NetCDF to encode, dims (station_ids, time). Must contain every variable in
+# pretrained_time_series_vars and pretrained_static_vars below, under those
+# exact names. Can be overridden with --pretrain_data.
+pretrained_path: <DATA_ROOT>/my_pretrain_inputs.nc
+
+model:
+  nn:
+    # Must match the checkpoint's architecture exactly.
+    hidden_size: 256
+    num_heads: 4
+    num_enc_layers: 4
+    d_ffd: 512
+    dropout: 0.1
+
+    # 'mfformer' (MFFormerDecLSTM) or 'stefaland_patch_tft'.
+    pretrained_type: mfformer
+    pretrained_model: <CHECKPOINT_ROOT>/my_foundation_model.pt
+
+    # IMPORTANT: read these lists off the checkpoint itself, not from a
+    # training config. The ground truth is the checkpoint's per-variable
+    # embedding submodule names:
+    #   time_series_embedding.embeddings1.<var>
+    #   static_embedding.numerical_embeddings1.<var>
+    # e.g.
+    #   sd = torch.load(ckpt, map_location='cpu', weights_only=False)['model_state_dict']
+    #   sd = {k.removeprefix('module.'): v for k, v in sd.items()}
+    #   sorted({k.split('.')[2] for k in sd if k.startswith('time_series_embedding.embeddings1.')})
+    #   sorted({k.split('.')[2] for k in sd if k.startswith('static_embedding.numerical_embeddings1.')})
+    # Weights are copied by name+shape only: a mismatched list loads without
+    # error for the overlapping variables and silently leaves the rest at
+    # random init. Check the "Loaded N parameters" log line.
+    pretrained_time_series_vars: [<ts_var_1>, <ts_var_2>]
+    pretrained_static_vars: [<static_var_1>, <static_var_2>]

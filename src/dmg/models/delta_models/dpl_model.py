@@ -1,0 +1,175 @@
+import logging
+from typing import Any, Optional
+
+import torch.nn
+
+from dmg.core.utils.factory import import_phy_model, load_nn_model
+
+log = logging.getLogger(__name__)
+
+
+class DplModel(torch.nn.Module):
+    """Differentiable parameter learning (dPL) model.
+
+    Learn parameters for a physics model using a neural network (NN).
+
+    Default modality:
+        Parameterization neural network (NN) -> Physics Model (phy_model)
+
+        - NN: e.g., LSTM, MLP, KNN
+            Learns parameters for the physics model.
+
+        - phy_model: e.g., HBV 1.0, HBV 1.1p.
+            A parameterized physics model that ingests NN-generated parameters
+            and produces some target output. This model must be implemented in a differentiable way to facilitate PyTorch auto-differentiation.
+
+    Parameters
+    ----------
+    phy_model_name
+        The name of the physical model. This allows initialization of multiple
+        physics models from the same config. If not specified, the first
+        model provided in the config is used.
+    phy_model
+        An initialized physics model.
+    nn_model
+        An initialized neural network model.
+    config
+        Configuration settings for the model.
+    device
+        The device to run the model on.
+    compile_nn
+        If True, apply torch.compile to the NN model and pad inputs to
+        'nn_pad_size' for fixed-shape compilation.
+    nn_pad_size
+        Fixed catchment-dimension size for NN input padding. Required when
+        'compile_nn' is True. Typically set to 'max_cat_size'.
+    """
+
+    def __init__(
+        self,
+        *,
+        phy_model_name: Optional[str] = None,
+        phy_model: Optional[torch.nn.Module] = None,
+        nn_model: Optional[torch.nn.Module] = None,
+        config: Optional[dict[str, Any]] = None,
+        device: Optional[torch.device] = 'cpu',
+        compile_nn: bool = False,
+        nn_pad_size: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        self.name = 'Differentiable Parameter Learning Model'
+        self.config = config
+        self.device = torch.device(device)
+
+        self._compile_nn = compile_nn
+
+        if nn_model and phy_model:
+            self.phy_model = phy_model.to(self.device)
+            self.nn_model = nn_model.to(self.device)
+        elif config:
+            # Initialize new models.
+            self.phy_model = self._init_phy_model(phy_model_name)
+            self.nn_model = self._init_nn_model()
+        else:
+            raise ValueError(
+                "A (1) initialized neural network and physics model or (2)"
+                / " configuration dictionary is required.",
+            )
+
+        # ── torch.compile with fixed-shape padding ──
+        self._nn_model_name = type(self.nn_model).__name__
+        self._nn_pad_size = nn_pad_size if compile_nn else None
+        if compile_nn:
+            log.info(
+                f"Compiling NN ({self._nn_model_name}) with pad_size={nn_pad_size}"
+            )
+            self.nn_model = torch.compile(self.nn_model)
+
+        self.initialized = True
+
+    def _init_phy_model(self, phy_model_name) -> torch.nn.Module:
+        """Initialize a physics model.
+
+        Parameters
+        ----------
+        phy_model_name
+            The name of the physics model.
+
+        Returns
+        -------
+        torch.nn.Module
+            The physics model.
+        """
+        if phy_model_name:
+            model_name = phy_model_name
+        elif self.config['phy']:
+            model_name = self.config['phy']['name'][0]
+        else:
+            raise ValueError(
+                "A (1) physics model name or (2) model spec in"
+                / " a configuration dictionary is required.",
+            )
+
+        model = import_phy_model(model_name)
+
+        # Merge model-level warmup into phy config as warm_up so physics models
+        # (e.g. Hbv_1_1p) can set pred_cutoff correctly. The phy config key is
+        # warm_up; the top-level model config key is warmup.
+        phy_cfg = dict(self.config['phy'])
+        if 'warm_up' not in phy_cfg and 'warmup' in self.config:
+            phy_cfg['warm_up'] = self.config['warmup']
+
+        return model(phy_cfg, device=self.device)
+
+    def _init_nn_model(self) -> torch.nn.Module:
+        """Initialize a neural network model.
+
+        Returns
+        -------
+        torch.nn.Module
+            The neural network.
+        """
+        return load_nn_model(
+            self.config,
+            self.phy_model,
+            device=self.device,
+            compilable=self._compile_nn,
+        )
+
+    def forward(
+        self,
+        data_dict: dict[str, torch.Tensor],
+        batched: bool = False,
+    ) -> torch.Tensor:
+        """Forward pass.
+
+        Parameters
+        ----------
+        data_dict
+            The input data dictionary.
+        batch
+            If True, use sequential forward pass (for stepwise prediction).
+            If False, use batched forward pass (for warmup).
+
+        Returns
+        -------
+        torch.Tensor
+            The output predictions.
+        """
+        # Neural network - simplified version for performance
+        if self._nn_model_name == 'LstmMlpModel':
+            parameters = self.nn_model(data_dict['xc_nn_norm'], data_dict['c_nn_norm'])
+        elif getattr(self.nn_model, 'ACCEPTS_BATCH_DICT', False):
+            # Models like DirectFinetuneing/EmbeddingFinetuneing need the full
+            # data_dict (not just xc_nn_norm) to access xc_pretrained_norm.
+            parameters = self.nn_model(data_dict)
+        else:
+            parameters = self.nn_model(data_dict['xc_nn_norm'])
+
+        # Physics model
+        predictions = self.phy_model(
+            data_dict,
+            parameters,
+        )
+
+        return predictions

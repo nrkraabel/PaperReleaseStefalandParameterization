@@ -1,0 +1,100 @@
+name: caravan3026_official
+# Schema-fixed copy of OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue.nc
+# (station/station_id -> station_ids coordinate rename only -- no values
+# changed/merged, see scripts/convert_caravan3026_task_station_schema.py).
+# This is the FIRST correctly-built version of this file: the prior
+# Caravan_camels_only_singlefile_dropHighNaN70.nc had total_precipitation/
+# temperature_2m (and ~11 other TIME_VARS) as 100%-NaN due to a variable-name
+# bug in its build script (bare names vs. the raw Caravan files' actual
+# _sum/_mean/_max/_min-suffixed names).
+data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
+
+# Station metadata with PUB/HUC mapping (3026 rows, PUB_ID in {1..5} --
+# matches this project's 5-fold PUB test scheme exactly).
+gage_split_file: ${oc.env:DMG_DATA_ROOT}/gages_list_caravan3026_with_pub_and_huc.csv
+station_ids: ${oc.env:DMG_DATA_ROOT}/gages_list_caravan3026.txt
+
+# Used for flow conversion / area normalization paths (analogous to CAMELS
+# area_gages2). NOTE: streamflow in this file already appears to be
+# area-normalized (mm/day) -- checked against `area` (1.6 to 4.69M km^2)
+# and streamflow (0-734, mean 1.43): a 4.69M km^2 basin capped at 734 in raw
+# m^3/s would be physically absurd (the Amazon alone discharges ~200,000
+# m^3/s), so this is consistent with mm/day, not raw discharge.
+area_name: area
+
+start_time: 1950/01/01
+end_time: 2022/12/30
+
+# Real (corrected) time-varying variable names in the file. NOT all are used
+# by any given config's model.phy/model.nn.forcings -- this is the full menu,
+# consistent with the repo's existing observations/*.yaml convention (e.g.
+# camels_531.yaml, carvan_3026.yaml) of listing every available var here and
+# letting individual configs pick a subset via model.phy/nn.forcings.
+all_forcings: [
+  total_precipitation_sum,
+  temperature_2m_mean,
+  temperature_2m_max,
+  temperature_2m_min,
+  surface_pressure_mean,
+  surface_pressure_max,
+  surface_pressure_min,
+  u_component_of_wind_10m_mean,
+  u_component_of_wind_10m_max,
+  u_component_of_wind_10m_min,
+  v_component_of_wind_10m_mean,
+  v_component_of_wind_10m_max,
+  v_component_of_wind_10m_min,
+  surface_net_solar_radiation_mean,
+  surface_net_solar_radiation_max,
+  surface_net_solar_radiation_min,
+  surface_net_thermal_radiation_mean,
+  surface_net_thermal_radiation_max,
+  surface_net_thermal_radiation_min,
+  snow_depth_water_equivalent_mean,
+  snow_depth_water_equivalent_max,
+  snow_depth_water_equivalent_min,
+  volumetric_soil_water_layer_1_mean,
+  volumetric_soil_water_layer_1_max,
+  volumetric_soil_water_layer_1_min,
+  volumetric_soil_water_layer_2_mean,
+  volumetric_soil_water_layer_2_max,
+  volumetric_soil_water_layer_2_min,
+  volumetric_soil_water_layer_3_mean,
+  volumetric_soil_water_layer_3_max,
+  volumetric_soil_water_layer_3_min,
+  volumetric_soil_water_layer_4_mean,
+  volumetric_soil_water_layer_4_max,
+  volumetric_soil_water_layer_4_min,
+  potential_evaporation_sum_ERA5_LAND,
+  potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+]
+
+# Curated subset of the file's 216 static vars (NOT all 216 -- most are
+# either redundant 12-month climatology breakdowns of a quantity whose
+# annual/summary + seasonality-index form is already included below,
+# target-leaky (streamflow/runoff statistics -- dis_m3_p*, run_mm_syr --
+# NEVER include these as model inputs when streamflow is the prediction
+# target), flow-regulation/reservoir confounders (lkv_mc_usu, rev_mc_usu,
+# ria_ha_usu, riv_tc_usu, pop_ct_usu, dor_pc_pva), or anthropogenic indices
+# out of scope for a natural-flow HBV-style baseline (hdi_ix_sav, gdp_ud_*,
+# ppd_pk_sav, urb_pc_sse, rdd_mk_sav). This mirrors the existing CAMELS-531
+# baseline attribute sets elsewhere in conf/ (topography + land cover + soil
+# + geology + CAMELS-style climate indices, ~20-30 vars), preferring the
+# FAO_PENMAN_MONTEITH-derived climate indices over the ERA5_LAND ones for
+# the same reason as the PET forcing choice (ERA5_LAND PET has a
+# non-physical range, see caravan3026 config comments).
+all_attributes: [
+  station_id, lat, lon, area,
+  # topography
+  ele_mt_sav, slp_dg_sav,
+  # land cover
+  for_pc_sse,
+  # soil
+  cly_pc_sav, snd_pc_sav, slt_pc_sav, swc_pc_syr, soc_th_sav,
+  # geology
+  kar_pc_sse,
+  # CAMELS/Caravan-style climate indices
+  p_mean, pet_mean_FAO_PM, aridity_FAO_PM, seasonality_FAO_PM,
+  frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur,
+  moisture_index_FAO_PM,
+]

@@ -1,0 +1,155 @@
+# @package _global_
+#
+# ABLATION 2 of 3 on EmbeddingDailyPUB_PureSpatial: linear probing.
+#
+# The network is reduced to Linear(LayerNorm(embedding)) -> HBV parameters.
+# No adapter, no LSTM decoder, and the task forcings/attributes never reach
+# the network at all (they are still loaded, so normalization statistics and
+# the PUB basin splits stay identical to the baseline's -- only the model
+# consumes less). See ablation_mode in
+# src/dmg/models/neural_networks/embedding_finetuneing.py.
+#
+# This is the standard frozen-representation probe: the embedding is
+# precomputed and never updated, so what is being measured is how much of the
+# HBV parameterization is linearly decodable from the embedding alone. The
+# HBV physics still receives its own model.phy forcings, so the ablation
+# constrains the parameterization network, not the water balance.
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: caravan3026_official
+
+name: ${observations.name}/${model.nn.name}/daily_linearprobe/${test.name}/pure_spatial
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: EmbeddingFinetuneLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
+data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_daily128_embedding.nc
+
+
+## Training ------------------------------#
+# Window, optimizer and epoch budget are held at the baseline's values. The
+# probe has far fewer parameters and will converge sooner, but changing the
+# schedule here would confound the architecture ablation with a training
+# ablation.
+train:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  target: [streamflow]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4]
+
+  huc_regions:
+      - [1]
+      - [2]
+      - [3]
+      - [4]
+
+  PUB_ids: [1, 2, 3, 4, 5]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2008/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_1_1p_Triton]
+    nmul: 16
+    warmup_states: True
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_1_1p_Triton: [parBETA, parK0, parBETAET]
+
+    routing: True
+    nearzero: 1e-5
+
+    forcings: [prcp, tmean, pet]
+    raw_forcings: [
+      total_precipitation_sum,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: []
+
+  nn:
+    name: EmbeddingFinetuneing
+    out_size: 1
+
+    embedding_size: 128
+    embedding_var_name: embedding
+    dropout: 0.1
+
+    # THE ABLATION.
+    ablation_mode: linear_probe
+
+    # Both are ignored under linear_probe (no adapter and no LSTM are built).
+    # Kept at explicitly-inert values rather than deleted so a diff against
+    # the baseline config shows the architecture being switched off.
+    adapter_type: none
+    use_residual_lstm: False
+    lstm_hidden_size: 256
+
+    # Loaded by EmbeddingFinetuneLoader but NOT fed to the network under
+    # linear_probe. Kept identical to the baseline so both runs normalize
+    # against the same statistics and see the same basins.
+    forcings: [
+      total_precipitation_sum,
+      temperature_2m_mean,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      surface_pressure_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: [
+      lat, lon, area,
+      ele_mt_sav, slp_dg_sav,
+      for_pc_sse,
+      cly_pc_sav, snd_pc_sav, slt_pc_sav, swc_pc_syr, soc_th_sav,
+      kar_pc_sse,
+      p_mean, pet_mean_FAO_PM, aridity_FAO_PM, seasonality_FAO_PM,
+      frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur,
+      moisture_index_FAO_PM,
+    ]

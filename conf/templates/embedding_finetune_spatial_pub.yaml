@@ -1,0 +1,131 @@
+# @package _global_
+#
+# Stage 3 template -- spatial holdout (PUB: prediction in ungauged basins).
+#
+# Same model as embedding_finetune_temporal.yaml, but evaluated by k-fold
+# basin holdout: each fold trains on every station outside one PUB group and
+# tests on the held-out group. No physics model, hydrodl2 NOT required.
+#
+# Requires in the observations config:
+#   gage_split_file  CSV with columns `gage` and `PUB_ID`
+#   station_ids      one id per line, same order as the task NetCDF
+# Station ids must be integer-castable (see docs/embeddings/README.md).
+#
+# Run from the repo root:
+#   python src/dmg/__main__.py --config-name templates/embedding_finetune_spatial_pub
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: <my_dataset>    # conf/observations/<my_dataset>.yaml
+
+name: ${observations.name}/${model.nn.name}/spatial_PUB
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: EmbeddingFinetuneLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: <OUTPUT_ROOT>/
+data_path: ${observations.data_path}
+# Embedding NetCDF: var `embedding`, dims (station_ids, time, embed_dim) or
+# (station_ids, embed_dim). Raw output of generate_embeddings.py, or the
+# condensed output of train_condensed_embedding.py / apply_condenser.py.
+embedding_path: <EMBEDDING_ROOT>/my_embeddings_daily.nc
+
+
+## Training ------------------------------#
+train:
+  start_time: <YYYY/MM/DD>
+  end_time: <YYYY/MM/DD>
+  target: [<streamflow_var>]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 100
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: <YYYY/MM/DD>
+  end_time: <YYYY/MM/DD>
+  batch_size: 128
+  test_epoch: 100
+  name: spatial
+  type: spatial      # dispatches to run_spatial_testing()
+  extent: PUB        # PUB: holdout by PUB_ID. PUR: holdout by `huc` region (set huc_regions instead)
+
+  # One fold per entry: holdout_indexs[i] selects PUB_ids[i] as the test group.
+  # PUB_ids must match the PUB_ID values in observations.gage_split_file.
+  holdout_indexs: [0, 1, 2, 3, 4]
+  PUB_ids: [1, 2, 3, 4, 5]
+
+  # For extent: PUR, one list of `huc` values per fold, e.g.
+  # huc_regions:
+  #   - [1, 2]
+  #   - [3]
+
+
+## Inference -------------------------------#
+sim:
+  start_time: <YYYY/MM/DD>
+  end_time: <YYYY/MM/DD>
+  batch_size: 128
+
+
+## Neural Network Model (no physics) --------------#
+model:
+  rho: 365      # training sequence length (days)
+  warmup: 365   # spin-up days prepended and excluded from the loss
+  use_log_norm: []
+
+  nn:
+    name: EmbeddingFinetuneing
+    out_size: 1
+
+    # MUST equal the last dimension of the file at embedding_path (e.g. 256
+    # for raw MFFormer embeddings, or the condenser's --condensed_width).
+    embedding_size: <embed_dim>
+    embedding_var_name: embedding
+    dropout: 0.1
+
+    adapter_type: dual_residual
+    adapter_params:
+      dropout: 0.1
+      combined_dropout: 0.2
+      hidden_multiplier: 2
+
+    use_residual_lstm: True
+    lstm_hidden_size: 256
+
+    # Architecture ablations: none (full model, default) | linear_probe |
+    # embedding_as_input. See embedding_finetuneing.py.
+    # ablation_mode: none
+
+    # Subsets of observations.all_forcings / all_attributes. Both lists must
+    # be non-empty.
+    forcings: [
+      <precipitation>,
+      <temperature_max>,
+      <temperature_min>,
+      <shortwave_radiation>,
+    ]
+    attributes: [
+      lat, lon, area,
+      <elevation>,
+      <slope>,
+      <aridity>,
+    ]

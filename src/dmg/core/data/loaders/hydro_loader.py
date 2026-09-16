@@ -1,0 +1,703 @@
+import json
+import logging
+import os
+import pickle
+from functools import partial
+from typing import Any, Optional, Union
+
+import numpy as np
+import pandas as pd
+import torch
+from numpy.typing import NDArray
+
+from dmg.core.data.data import intersect, split_dataset_by_basin
+from dmg.core.data.loaders.base import BaseLoader
+
+log = logging.getLogger(__name__)
+
+
+class HydroLoader(BaseLoader):
+    """Data loader for hydrological data from CAMELS dataset.
+
+    Credit: Leo Lonzarich, Yalan Song (2024)
+
+    All data is loaded as PyTorch tensors. According to config settings,
+    generates...
+    - `dataset` for model inference,
+    - `train_dataset` for training,
+    - `eval_dataset` for testing.
+
+    The CAMELS dataset is a large-sample watershed-scale hydrometeorological
+    dataset for the contiguous USA and includes both meteorological forcings
+    and basin attributes.
+
+    CAMELS:
+    - https://ral.ucar.edu/solutions/products/camels
+
+    - A. Newman; K. Sampson; M. P. Clark; A. Bock; R. J. Viger; D. Blodgett,
+        2014. A large-sample watershed-scale hydrometeorological dataset for the
+        contiguous USA. Boulder, CO: UCAR/NCAR.
+        https://dx.doi.org/10.5065/D6MW2F4D
+
+    Parameters
+    ----------
+    config
+        Configuration dictionary.
+    test_split
+        Whether to split data into training and testing sets.
+    overwrite
+        Whether to overwrite existing normalization statistics.
+    holdout_index
+        Index for spatial holdout testing.
+
+    NOTE: to support new datasets of similar form to CAMELS, add the dataset
+    key name to `self.supported_data`.
+    """
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        test_split: Optional[bool] = False,
+        overwrite: Optional[bool] = False,
+        holdout_index: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.test_split = test_split
+        self.overwrite = overwrite
+        self.holdout_index = holdout_index
+        self.supported_data = [
+            'camels_671',
+            'camels_531',
+            'prism_671',
+            'prism_531',
+            'camels_671_lstm',
+            'camels_531_lstm',
+        ]
+        self.data_name = config['observations']['name']
+        self.nn_attributes = config['model']['nn'].get('attributes', [])
+        self.nn_forcings = config['model']['nn'].get('forcings', [])
+        self.forcing_names = self.config['observations']['all_forcings']
+        self.attribute_names = self.config['observations']['all_attributes']
+
+        if config['model']['phy']:
+            self.phy_attributes = config['model']['phy'].get('attributes', [])
+            self.phy_forcings = config['model']['phy'].get('forcings', [])
+        else:
+            self.phy_attributes = []
+            self.phy_forcings = []
+
+        # MoE gate attributes
+        self.gate_attributes = (
+            config.get('moe', {}).get('gate', {}).get('attributes', [])
+        )
+
+        self.target = config['train']['target']
+        self.log_norm_vars = config['model'].get('use_log_norm', [])
+        self.flow_regime = config['model'].get('flow_regime', None)
+        self.device = config['device']
+        self.dtype = config['dtype']
+
+        self.train_dataset = None
+        self.eval_dataset = None
+        self.dataset = None
+        self.norm_stats = None
+
+        if self.data_name not in self.supported_data:
+            raise ValueError(f"Data source '{self.data_name}' not supported.")
+
+        if self.log_norm_vars is None:
+            self.log_norm_vars = []
+
+        if self.flow_regime == 'high':
+            # High flow regime: Gaussian normalization for all variables
+            self.log_norm_vars = []
+            self.norm_target = True
+        elif self.flow_regime == 'low':
+            # Low flow regime: Log-Gamma normalization
+            self.log_norm_vars = ['prcp', 'runoff', 'streamflow']
+            self.norm_target = True
+        else:
+            self.norm_target = False
+
+        self.load_dataset()
+
+    def load_dataset(self) -> None:
+        """Load data into dictionary of nn and physics model input tensors."""
+        mode = self.config['mode']
+        is_spatial_test = self.config.get('test', {}).get('type') == 'spatial'
+
+        if mode == 'sim':
+            self.dataset = self._preprocess_data(scope='sim')
+        elif is_spatial_test:
+            # For spatial testing, load data and split by basin using utility function
+            train_dataset = self._preprocess_data(scope='train')
+            test_dataset = self._preprocess_data(scope='test')
+
+            self.train_dataset, _ = split_dataset_by_basin(
+                train_dataset,
+                self.config,
+                self.holdout_index,
+            )
+            _, self.eval_dataset = split_dataset_by_basin(
+                test_dataset,
+                self.config,
+                self.holdout_index,
+            )
+        elif self.test_split:
+            self.train_dataset = self._preprocess_data(scope='train')
+            self.eval_dataset = self._preprocess_data(scope='test')
+        elif mode in ['train', 'test']:
+            self.train_dataset = self._preprocess_data(scope=mode)
+        else:
+            self.dataset = self._preprocess_data(scope='all')
+
+    def _preprocess_data(
+        self,
+        scope: Optional[str],
+    ) -> dict[str, torch.Tensor]:
+        """
+        Read, preprocess, and return a dictionary of tensor inputs/output(s) for
+        models.
+        """
+        x_phy, c_phy, x_nn, c_nn, target, c_gate = self.read_data(scope)
+
+        # Normalize nn input data
+        self.load_norm_stats(x_nn, c_nn, target, c_gate=c_gate)
+        xc_nn_norm, y_nn_norm = self.normalize(x_nn, c_nn, target)
+
+        # Only normalize target for training data.
+        if (y_nn_norm is not None) and (scope == 'train'):
+            target = y_nn_norm
+        del y_nn_norm
+
+        # Build data dict of Torch tensors
+        dataset = {
+            'x_phy': self.to_tensor(x_phy),
+            'c_phy': self.to_tensor(c_phy),
+            'x_nn': self.to_tensor(x_nn),
+            'c_nn': self.to_tensor(c_nn),
+            'xc_nn_norm': self.to_tensor(xc_nn_norm),
+            'target': self.to_tensor(target),
+        }
+
+        # Attach function to convert model predictions back to mm/day.
+        if self.norm_target and scope != 'train':
+            dataset['denorm_fn'] = partial(
+                self.denormalize_prediction,
+                c_nn,
+            )
+
+        # MoE gate attributes
+        if c_gate is not None:
+            c_gate_norm = self.to_norm(c_gate, self.gate_attributes)
+            c_gate_norm[c_gate_norm != c_gate_norm] = 0  # NaN -> 0
+            dataset['c_gate_norm'] = self.to_tensor(c_gate_norm)
+
+        return dataset
+
+    def read_data(self, scope: Optional[str]) -> tuple[NDArray[np.float32], ...]:
+        """Read data from pickle file.
+
+        Parameters
+        ----------
+        scope
+            Scope of data to read, affects what timespan of data is loaded.
+
+        Returns
+        -------
+        tuple[NDArray[np.float32], ...]
+            Tuple of neural network + physics model (+ optional ensemble network
+            inputs) and target data.
+        """
+        try:
+            if self.config['observations']['data_path']:
+                data_path = self.config['observations']['data_path']
+
+            if scope == 'train':
+                if not data_path:
+                    # NOTE: still including 'train_path' etc. for backwards
+                    # compatibility until all code is updated to use 'data_path'.
+                    data_path = self.config['observations']['train_path']
+                time = self.config['train_time']
+            elif scope == 'test':
+                if not data_path:
+                    data_path = self.config['observations']['test_path']
+                time = self.config['test_time']
+            elif scope == 'sim':
+                if not data_path:
+                    data_path = self.config['observations']['test_path']
+                time = self.config['sim_time']
+            elif scope == 'all':
+                if not data_path:
+                    data_path = self.config['observations']['test_path']
+                time = self.config['all_time']
+            else:
+                raise ValueError(
+                    "Scope must be 'train', 'test', 'sim', or 'all'.",
+                )
+        except KeyError as e:
+            raise ValueError(f"Key {e} for data path not in dataset config.") from e
+
+        # Get time indicies
+        all_time = pd.date_range(
+            self.config['all_time'][0],
+            self.config['all_time'][-1],
+            freq='d',
+        )
+        idx_start = all_time.get_loc(time[0])
+        idx_end = all_time.get_loc(time[-1]) + 1
+
+        # Load data
+        with open(data_path, 'rb') as f:
+            forcings, target, attributes = pickle.load(f)
+
+        forcings = np.transpose(forcings[:, idx_start:idx_end], (1, 0, 2))
+
+        # Forcing subset for phy model
+        phy_forc_idx = []
+        for forc in self.phy_forcings:
+            if forc not in self.forcing_names:
+                raise ValueError(f"Forcing {forc} not listed in available forcings.")
+            phy_forc_idx.append(self.forcing_names.index(forc))
+
+        # Attribute subset for phy model
+        phy_attr_idx = []
+        for attr in self.phy_attributes:
+            if attr not in self.attribute_names:
+                raise ValueError(f"Attribute {attr} not in the list of all attributes.")
+            phy_attr_idx.append(self.attribute_names.index(attr))
+
+        # Forcings subset for nn model
+        nn_forc_idx = []
+        for forc in self.nn_forcings:
+            if forc not in self.forcing_names:
+                raise ValueError(f"Forcing {forc} not in the list of all forcings.")
+            nn_forc_idx.append(self.forcing_names.index(forc))
+
+        # Attribute subset for nn model
+        nn_attr_idx = []
+        for attr in self.nn_attributes:
+            if attr not in self.attribute_names:
+                raise ValueError(f"Attribute {attr} not in the list of all attributes.")
+            nn_attr_idx.append(self.attribute_names.index(attr))
+
+        # MoE gate attributes
+        gate_attr_idx = []
+        for attr in self.gate_attributes:
+            if attr not in self.attribute_names:
+                raise ValueError(
+                    f"Gate attribute '{attr}' not found in available "
+                    f"attributes: {list(self.attribute_names)}"
+                )
+            gate_attr_idx.append(self.attribute_names.index(attr))
+
+        x_phy = forcings[:, :, phy_forc_idx]
+        c_phy = attributes[:, phy_attr_idx]
+        x_nn = forcings[:, :, nn_forc_idx]
+        c_nn = attributes[:, nn_attr_idx]
+        c_gate = attributes[:, gate_attr_idx] if gate_attr_idx else None
+        target = np.transpose(target[:, idx_start:idx_end], (1, 0, 2))
+
+        # Subset basins if necessary
+        if self.config['observations']['subset_path'] is not None:
+            subset_path = self.config['observations']['subset_path']
+            gage_id_path = self.config['observations']['gage_info']
+
+            with open(subset_path) as f:
+                selected_basins = json.load(f)
+            gage_info = np.load(gage_id_path)
+
+            subset_idx = intersect(selected_basins, gage_info)
+
+            x_phy = x_phy[:, subset_idx, :]
+            c_phy = c_phy[subset_idx, :]
+            x_nn = x_nn[:, subset_idx, :]
+            c_nn = c_nn[subset_idx, :]
+            target = target[:, subset_idx, :]
+            if c_gate is not None:
+                c_gate = c_gate[subset_idx, :]
+
+        # Convert flow to mm/day (and dimensionless for training).
+        target = self.flow_conversion(c_nn, target, scope=scope)
+
+        return (x_phy, c_phy, x_nn, c_nn, target, c_gate)
+
+    def flow_conversion(
+        self,
+        c_nn: NDArray[np.float32],
+        target: NDArray[np.float32],
+        scope: Optional[str] = 'train',
+    ) -> NDArray[np.float32]:
+        """Convert flow from ft3/s to mm/day.
+
+        For training with pure-ML models (no physics), also divides by
+        prcp_mean to make the target dimensionless.
+
+        Parameters
+        ----------
+        c_nn
+            Neural network static data.
+        target
+            Target variable data.
+        scope
+            Data scope. Only 'train' applies the prcp_mean dimensionless
+            scaling for pure-ML models; eval scopes stay in mm/day.
+        """
+        for name in ['flow_sim', 'streamflow', 'runoff', 'QObs']:
+            if name in self.target:
+                i = self.target.index(name)
+                target_temp = target[:, :, i]
+                area_name = self.config['observations']['area_name']
+                basin_area = c_nn[:, self.nn_attributes.index(area_name)]
+
+                area = np.expand_dims(basin_area, axis=0).repeat(
+                    target_temp.shape[0],
+                    0,
+                )
+
+                # ft3/s -> mm/day
+                target[:, :, i] = (
+                    target_temp * 0.0283168 * 3600 * 24 * 1e3 / (area * 1e6)
+                )
+                # From hydrodl:
+                # if to_norm:
+                #     target[:, :, self.target.index(name)] = (
+                #         target_temp * 0.0283168 * 3600 * 24 * 1e3 / (area * 1e6)
+                #     ) * p_factor
+                # else:
+                #     target[:, :, self.target.index(name)] = (
+                #         target_temp * (area * 1e6) / (0.0283168 * 3600 * 24 * 1e3)
+                #     ) * p_factor
+
+                # Make dimensionless for ML training only.
+                if (scope == 'train') and (self.config['model']['phy'] is None):
+                    prcp_mean_name = self.config['observations']['prcp_mean_name']
+                    prcp_mean = c_nn[:, self.nn_attributes.index(prcp_mean_name)]
+                    target[:, :, i] = target[:, :, i] / prcp_mean
+
+        return target
+
+    def load_norm_stats(
+        self,
+        x_nn: NDArray[np.float32],
+        c_nn: NDArray[np.float32],
+        target: NDArray[np.float32],
+        c_gate: Optional[NDArray[np.float32]] = None,
+    ) -> None:
+        """Load or calculate normalization statistics if necessary.
+
+        Parameters
+        ----------
+        x_nn
+            Neural network dynamic data [n_basins, n_time, n_forcing].
+        c_nn
+            Neural network static data [n_basins, n_attr].
+        target
+            Target variable data [n_basins, n_time, n_target].
+        c_gate
+            Optional gate attribute data [n_basins, n_gate_attr].
+        """
+        self.out_path = os.path.join(
+            self.config['model_dir'],
+            'normalization_statistics.json',
+        )
+
+        recompute = False
+        if os.path.isfile(self.out_path) and (not self.overwrite):
+            if not self.norm_stats:
+                with open(self.out_path) as f:
+                    self.norm_stats = json.load(f)
+            # Check if target and gate variable names are in cached stats.
+            missing_target = [v for v in self.target if v not in self.norm_stats]
+            if missing_target:
+                recompute = True
+            if c_gate is not None:
+                missing = [v for v in self.gate_attributes if v not in self.norm_stats]
+                if missing:
+                    recompute = True
+        else:
+            recompute = True
+
+        if recompute:
+            self.norm_stats = self._init_norm_stats(
+                x_nn,
+                c_nn,
+                target,
+                c_gate=c_gate,
+            )
+
+    def _init_norm_stats(
+        self,
+        x_nn: NDArray[np.float32],
+        c_nn: NDArray[np.float32],
+        target: NDArray[np.float32],
+        c_gate: Optional[NDArray[np.float32]] = None,
+    ) -> dict[str, list[float]]:
+        """Compile and save normalization statistics for model inputs."""
+        stat_dict = {}
+
+        # Get basin areas from attributes.
+        basin_area = self._get_basin_area(c_nn)
+
+        # Forcing variable stats
+        for k, var in enumerate(self.nn_forcings):
+            if var in self.log_norm_vars:
+                stat_dict[var] = self._calc_gamma_stats(x_nn[:, :, k])
+            else:
+                stat_dict[var] = self._calc_norm_stats(x_nn[:, :, k])
+
+        # Attribute variable stats
+        for k, var in enumerate(self.nn_attributes):
+            stat_dict[var] = self._calc_norm_stats(c_nn[:, k])
+
+        # Gate attribute stats (skip any already computed above).
+        if c_gate is not None:
+            for k, var in enumerate(self.gate_attributes):
+                if var not in stat_dict:
+                    stat_dict[var] = self._calc_norm_stats(c_gate[:, k])
+
+        # Target variable stats
+        for i, name in enumerate(self.target):
+            if (name in ['flow_sim', 'streamflow', 'runoff', 'QObs']) and (
+                not self.norm_target
+            ):
+                stat_dict[name] = self._calc_norm_stats(
+                    np.swapaxes(target[:, :, i : i + 1], 1, 0).copy(),
+                    basin_area,
+                )
+            else:
+                stat_dict[name] = self._calc_norm_stats(
+                    np.swapaxes(target[:, :, i : i + 1], 1, 0).copy(),
+                )
+
+        with open(self.out_path, 'w') as f:
+            json.dump(stat_dict, f, indent=4)
+
+        return stat_dict
+
+    def _calc_norm_stats(
+        self,
+        x: NDArray[np.float32],
+        basin_area: NDArray[np.float32] = None,
+    ) -> tuple[float, ...]:
+        """
+        Calculate Gaussian normalization statistics with optional basin area
+        adjustment. 10th percentile, 90th percentile, mean, std.
+        """
+        # Handle invalid values
+        x[x == -999] = np.nan
+        if basin_area is not None:
+            x[x < 0] = 0  # Specific to basin normalization
+
+        # Basin area normalization
+        if basin_area is not None:
+            nd = len(x.shape)
+            if (nd == 3) and (x.shape[2] == 1):
+                x = x[:, :, 0]  # Unsqueeze the original 3D matrix
+            temparea = np.tile(basin_area, (1, x.shape[1]))
+            flow = (x * 0.0283168 * 3600 * 24) / (temparea * (10**6)) * 10**3
+            x = flow  # Replace x with flow for further calculations
+
+        # Flatten and exclude NaNs and invalid values
+        a = x.flatten()
+        if basin_area is None:
+            if len(x.shape) > 1:
+                a = np.swapaxes(x, 1, 0).flatten()
+            else:
+                a = x.flatten()
+        b = a[(~np.isnan(a)) & (a != -999999)]
+        if b.size == 0:
+            b = np.array([0])
+
+        # Calculate stats
+        if basin_area is not None:
+            transformed = np.log10(np.sqrt(b) + 0.1)
+        else:
+            transformed = b
+        p10, p90 = np.percentile(transformed, [10, 90]).astype(float)
+        mean = np.mean(transformed).astype(float)
+        std = np.std(transformed).astype(float)
+
+        return (p10, p90, mean, max(std, 0.001))
+
+    def _calc_gamma_stats(self, x: NDArray[np.float32]) -> tuple[float, ...]:
+        """
+        Calculate log-sqrt (gamma) normalization statistics. 10th percentile,
+        90th percentile, mean, std.
+
+        log10(sqrt(x) + 0.1) transform.
+        """
+        a = np.swapaxes(x, 1, 0).flatten()
+        b = a[(~np.isnan(a))]
+        b = np.log10(np.sqrt(b) + 0.1)
+
+        p10, p90 = np.percentile(b, [10, 90]).astype(float)
+        mean = np.mean(b).astype(float)
+        std = np.std(b).astype(float)
+
+        return [p10, p90, mean, max(std, 0.001)]
+
+    def _get_basin_area(self, c_nn: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Get basin area from attributes."""
+        try:
+            area_name = self.config['observations']['area_name']
+            basin_area = c_nn[:, self.nn_attributes.index(area_name)][:, np.newaxis]
+        except KeyError:
+            log.warning(
+                "No 'area_name' in observation config. Basin"
+                "area norm will not be applied.",
+            )
+            basin_area = None
+        return basin_area
+
+    def normalize(
+        self,
+        x_nn: NDArray[np.float32],
+        c_nn: NDArray[np.float32],
+        target: NDArray[np.float32],
+    ) -> NDArray[np.float32]:
+        """Normalize data for neural network.
+
+        Parameters
+        ----------
+        x_nn
+            Neural network dynamic data.
+        c_nn
+            Neural network static data.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            Normalized x_nn and c_nn concatenated together.
+        """
+        x_nn_norm = self.to_norm(x_nn, self.nn_forcings)
+        c_nn_norm = self.to_norm(c_nn, self.nn_attributes)
+
+        if not self.norm_target:
+            y_nn_norm = None
+        else:
+            y_nn_norm = self.to_norm(target, self.target)
+
+        # Remove nans
+        x_nn_norm[x_nn_norm != x_nn_norm] = 0
+        c_nn_norm[c_nn_norm != c_nn_norm] = 0
+
+        c_nn_norm = np.repeat(
+            np.expand_dims(c_nn_norm, 0),
+            x_nn_norm.shape[0],
+            axis=0,
+        )
+
+        xc_nn_norm = np.concatenate((x_nn_norm, c_nn_norm), axis=2)
+        del x_nn_norm, c_nn_norm, x_nn
+
+        return xc_nn_norm, y_nn_norm
+
+    def to_norm(
+        self,
+        data: NDArray[np.float32],
+        vars: list[str],
+    ) -> NDArray[np.float32]:
+        """Normalize data with Gaussian or log-Gaussian norm.
+
+        Parameters
+        ----------
+        data
+            Data to normalize.
+        vars
+            List of variable names in data to normalize.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            Normalized data.
+        """
+        if isinstance(vars, str):
+            vars = [vars]
+
+        data = np.asarray(data)  # , dtype=self.dtype)
+        data_norm = np.zeros_like(data)  # , dtype=self.dtype)
+
+        for k, var in enumerate(vars):
+            stat = self.norm_stats[var]
+            mean, std = stat[2], stat[3]
+
+            if var in self.log_norm_vars:
+                if np.any(data[..., k] < 0):
+                    raise ValueError(
+                        f"Variable '{var}' contains negative values before log transform.",
+                    )
+                transformed = np.log10(np.sqrt(data[..., k]) + 0.1)
+            else:
+                transformed = data[..., k]
+
+            data_norm[..., k] = (transformed - mean) / std
+        return data_norm
+
+    def from_norm(
+        self,
+        data_scaled: NDArray[np.float32],
+        vars: Union[list[str], str],
+    ) -> NDArray[np.float32]:
+        """De-normalize data with a Gaussian or log-Gaussian norm.
+
+        Parameters
+        ----------
+        data_scaled
+            Data to de-normalize.
+        vars
+            List of variable names in data to de-normalize.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            De-normalized data.
+        """
+        if isinstance(vars, str):
+            vars = [vars]
+
+        data_scaled = np.asarray(data_scaled)  # , dtype=self.dtype)
+        data = np.zeros_like(data_scaled)  # , dtype=self.dtype)
+
+        for k, var in enumerate(vars):
+            stat = self.norm_stats[var]
+            mean, std = stat[2], stat[3]
+
+            denormed = data_scaled[..., k] * std + mean
+
+            if var in self.log_norm_vars:
+                # Invert the log-sqrt transform
+                data[..., k] = (np.power(10.0, denormed) - 0.1) ** 2
+            else:
+                data[..., k] = denormed
+
+        return data
+
+    def denormalize_prediction(
+        self,
+        c_nn: NDArray[np.float32],
+        data: NDArray[np.float32],
+    ) -> NDArray[np.float32]:
+        """Convert model predictions back to mm/day.
+
+        Undoes Gaussian/log-Gaussian normalization, then undoes the
+        prcp_mean dimensionless scaling for pure-ML models.
+
+        Parameters
+        ----------
+        c_nn
+            Neural network static data.
+        data
+            Model predictions in normalized space.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            Model predictions converted back to mm/day.
+        """
+        data = self.from_norm(data, vars=self.target)
+        prcp_mean_name = self.config['observations']['prcp_mean_name']
+        prcp_mean = c_nn[:, self.nn_attributes.index(prcp_mean_name)]
+        data[:, :, 0] = data[:, :, 0] * prcp_mean
+        return data

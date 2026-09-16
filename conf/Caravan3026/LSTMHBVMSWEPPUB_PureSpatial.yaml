@@ -1,0 +1,168 @@
+# @package _global_
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: caravan3026_official
+
+name: ${observations.name}/${model.nn.name}-mswep/${test.name}/pure_spatial
+
+# ===========================================================================
+# MSWEP precipitation variant of LSTMHBVPUB_PureSpatial.yaml.
+#
+# The ONLY differences from that baseline are:
+#   * data_path and pretrained_path -> the _MSWEP.nc file, which is the same
+#     Caravan CAMELS-only task file plus one extra variable.
+#   * every `total_precipitation_sum` entry in the forcing lists below ->
+#     `total_precipitation_sum_MSWEP`.
+# Architecture, windows, PUB folds, seeds, optimizer and attributes are
+# byte-for-byte the baseline's, so a difference in scores is attributable to
+# the precipitation product alone.
+#
+# `total_precipitation_sum_MSWEP` is MSWEP v2.8 (0.1 deg, gauge+satellite+
+# reanalysis) reduced to each catchment polygon with the same cos(lat)-
+# weighted exact-intersection average Caravan uses for its own ERA5-Land
+# means -- see scripts/data_prep/mswep_forcing/README.md. It is aligned to the
+# file's TRUE dates, which the `time` coordinate mislabels by up to a year
+# per sub-dataset; column-for-column it is in register with every other
+# forcing here, which is what matters.
+#
+# Two known, deliberate inconsistencies:
+#   1. MSWEP starts 1979-01-01, so columns before each station's 1979 column
+#      are NaN. Both windows used here (train 1987-1997 / 1998-2008, minus
+#      365 warmup) sit entirely after that -- verified 0 NaN in the loaded
+#      span. This matters because loader_utils.calc_stats is NOT nan-aware:
+#      one NaN would make mean/std NaN and silently zero the whole
+#      precipitation channel.
+#   2. The `nn.attributes` climate indices (p_mean, aridity_FAO_PM,
+#      seasonality_FAO_PM, frac_snow, high/low_prec_freq/dur,
+#      moisture_index_FAO_PM) are still computed from ERA5-Land
+#      precipitation. Recomputing them from MSWEP is a bounded follow-up
+#      (Caravan's formulas: caravan_point_forcings/caravan_indices.py).
+# ===========================================================================
+
+## General -------------------------------#
+mode: train_test
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: NnDualLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
+data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids_MSWEP.nc
+# pretrained_path == data_path deliberately: this is a non-foundation-model
+# baseline (differentiable HBV-LSTM), so nn forcings/attributes must come
+# from the task file's own native variables, never a foundation-model-schema
+# file (3026Carvan_refpoints.nc is reserved for the mfformer-no-pretrain
+# config, which actually runs data through a foundation-model architecture).
+pretrained_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids_MSWEP.nc
+
+
+## Training ------------------------------#
+train:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  target: [streamflow]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4]
+
+  huc_regions:
+      - [1]
+      - [2]
+      - [3]
+      - [4]
+
+  PUB_ids: [1, 2, 3, 4, 5]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2008/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_1_1p_Triton]
+    nmul: 16
+    warmup_states: True
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_1_1p_Triton: [parBETA, parK0, parBETAET]
+
+    routing: True
+    nearzero: 1e-5
+
+    # NnDualLoader always derives HBV's [prcp, tmean, pet] forcings via
+    # Hargreaves-Samani from model.phy.raw_forcings (never by looking up
+    # 'forcings:' names directly in data_path -- that field is just a
+    # semantic label matching this repo's convention). raw_forcings order
+    # is fixed: [P, Tmax, Tmin, radiation].
+    forcings: [prcp, tmean, pet]
+    # 5th element (potential_evaporation_sum_FAO_PENMAN_MONTEITH) is used
+    # as measured PET directly, not Hargreaves-Samani-derived (see
+    # nn_dual_loader.py/embedding_finetune_loader.py: raw_forcings.shape[-1]
+    # >= 5 skips the HS approximation). tmean is still derived from Tmax/Tmin.
+    raw_forcings: [
+      total_precipitation_sum_MSWEP,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: []
+
+  nn:
+    name: CudnnLstmModel
+    hidden_size: 256
+    dropout: 0.1
+
+    forcings: [
+      total_precipitation_sum_MSWEP,
+      temperature_2m_mean,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      surface_pressure_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: [
+      lat, lon, area,
+      ele_mt_sav, slp_dg_sav,
+      for_pc_sse,
+      cly_pc_sav, snd_pc_sav, slt_pc_sav, swc_pc_syr, soc_th_sav,
+      kar_pc_sse,
+      p_mean, pet_mean_FAO_PM, aridity_FAO_PM, seasonality_FAO_PM,
+      frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur,
+      moisture_index_FAO_PM,
+    ]

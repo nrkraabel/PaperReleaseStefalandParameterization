@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the paper and this archive."
+title: "Foundation-model embeddings in a differentiable hydrologic model"
+abstract: >-
+  A modified copy of the dMG differentiable modeling framework, adapted so that
+  a differentiable rainfall-runoff model can take pretrained foundation-model
+  embeddings as input. Includes the offline embedding pipeline, the CAMELS-531
+  and Caravan-3026 experiment configurations, and the analysis scripts.
+type: software
+version: 1.0.0
+license: LicenseRef-PSU-NonCommercial
+repository-code: "https://github.com/<USER>/<REPO>"
+authors:
+  - family-names: Kraabel
+    given-names: Nicholas Ridgeway
+    affiliation: The Pennsylvania State University
+    # orcid: "https://orcid.org/0000-0000-0000-0000"
+  # - family-names: <COAUTHOR>
+  #   given-names: <COAUTHOR>
+  #   affiliation: The Pennsylvania State University
+keywords:
+  - differentiable modeling
+  - hydrology
+  - foundation models
+  - streamflow
+  - prediction in ungauged basins
+references:
+  - type: article
+    title: "Differentiable modelling to unify machine learning and physical models for geosciences"
+    authors:
+      - family-names: Shen
+        given-names: Chaopeng
+    journal: "Nature Reviews Earth & Environment"
+    volume: 4
+    start: 552
+    end: 567
+    year: 2023
+    doi: 10.1038/s43017-023-00450-9
+preferred-citation:
+  type: article
+  title: "<PAPER TITLE>"
+  authors:
+    - family-names: Kraabel
+      given-names: Nicholas Ridgeway
+  journal: "<JOURNAL>"
+  year: 2026
+  # doi: <PAPER DOI>

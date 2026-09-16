@@ -1,0 +1,48 @@
+# Observations template -- copy to conf/observations/<my_dataset>.yaml, fill
+# in every <PLACEHOLDER>, and reference it from an experiment config's
+# defaults list as `- /observations: <my_dataset>`.
+#
+# Required file layouts are described in docs/embeddings/README.md.
+
+name: <my_dataset>
+
+# Task NetCDF: dims (station_ids, time). Holds the forcing, static-attribute
+# and target variables named below. Values < -10 in the target are treated
+# as missing-data sentinels and set to NaN.
+data_path: <DATA_ROOT>/my_task_data.nc
+
+# Spatial (PUB/PUR) runs only -- delete both lines for temporal-only use.
+#   gage_split_file: CSV with a `gage` column plus `PUB_ID` (PUB) and/or
+#                    `huc` (PUR) columns assigning each station to a fold.
+#   station_ids:     text file, one id per line, in the SAME ORDER as the
+#                    task NetCDF's station_ids dimension.
+# Station ids must be integer-castable for spatial splits.
+gage_split_file: <DATA_ROOT>/gage_split.csv
+station_ids: <DATA_ROOT>/station_ids.txt
+
+# Name of the catchment-area attribute (used when converting flow units).
+area_name: area
+
+# Full date span covered by data_path (YYYY/MM/DD).
+start_time: <YYYY/MM/DD>
+end_time: <YYYY/MM/DD>
+
+# Menu of time-varying variables available in data_path. Experiment configs
+# pick a subset via model.nn.forcings.
+all_forcings: [
+  <precipitation>,
+  <temperature_max>,
+  <temperature_min>,
+  <shortwave_radiation>,
+]
+
+# Menu of static attributes available in data_path. Experiment configs pick
+# a subset via model.nn.attributes. Never include streamflow-derived
+# statistics (mean runoff, discharge percentiles, ...) when streamflow is
+# the prediction target -- that leaks the target into the inputs.
+all_attributes: [
+  lat, lon, area,
+  <elevation>,
+  <slope>,
+  <aridity>,
+]

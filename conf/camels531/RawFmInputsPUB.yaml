@@ -1,0 +1,206 @@
+# @package _global_
+#
+# No-foundation-model control for the Extended1980_1999 Camels531 ablation set.
+#
+# The foundation model is removed entirely and the raw variables it consumed
+# are fed to the residual adapter as additional time/static inputs beside the
+# task's own forcings/attributes. Nothing is encoded and no embedding file is
+# read, so the delta against the condensed-daily baseline isolates what the
+# pretrained encoder contributes over its own inputs.
+#
+# The variable lists below are the FM's ACTUAL inputs, not a re-derivation:
+# scripts/jobs/camels531/00_gen_embeddings_mfformer256.sh generated the
+# Camels531Extended_MFFormer256 embeddings with generate_embeddings.py pointed
+# at _MFFormerArchTemplate.yaml, whose header documents this exact set (5 ts
+# vars, no Runoff, 48 static vars) as the one read off MfformerGlobal20.pt's
+# own per-variable embedding submodule names, giving an exact 485/485
+# name+shape parameter match. Those embeddings are what the daily condenser
+# was trained on, and the condenser's output is the proposed method here.
+# All 53 names verified present in pretrained_path.
+#
+# Runoff is deliberately absent: it is the prediction target, and unlike the
+# masked-reconstruction pretraining setting there is no masking on this path
+# (the adapter sees inputs raw), so including it would be direct leakage.
+#
+# Everything downstream of the adapter is held identical to the baseline
+# (dual_residual adapter, 256-wide residual LSTM, projection) and d_model is
+# pinned to the condensed embedding's 128 so the two are capacity-matched.
+# See src/dmg/models/neural_networks/raw_fm_inputs_finetuneing.py -- in
+# particular that the adapter's hidden/residual stream is zeros here, because
+# no hidden representation exists to refine.
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: camels_531
+
+name: ${observations.name}/${model.nn.name}/${test.name}
+
+## General -------------------------------#
+mode: train_test
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+# NnDualLoader, not EmbeddingFinetuneLoader: this model needs the raw
+# pretrained-format variables under 'xc_pretrained_norm'. No embedding_path.
+data_loader: NnDualLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/RawFmInputs/
+data_path: ${oc.env:DMG_DATA_ROOT}/Camels_Pretrain.nc
+pretrained_path: ${oc.env:DMG_DATA_ROOT}/CamelsPretrain/Camels_refpoints_1979_2014.nc
+
+
+## Training ------------------------------#
+# Window, optimizer and epoch budget identical to EmbeddingPUB531 so the
+# comparison is an architecture/inputs comparison, not a training one.
+train:
+  start_time: 1980/10/01
+  end_time: 1999/09/30
+  target: [QObs]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1995/10/01
+  end_time: 1999/09/30
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4,5,6,7,8,9]  # 10-fold PUB
+
+  # Region Configuration for PUR (unused when extent is PUB, kept for
+  # config-shape consistency with the other PUB/PUR-switchable configs)
+  huc_regions:
+      - [1, 2]
+      - [3, 6]
+      - [4, 5, 7]
+      - [9, 10]
+      - [8, 11, 12, 13]
+      - [14, 15, 16, 18]
+      - [17]
+
+  PUB_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2001/01/01
+  end_time: 2001/12/31
+  batch_size: 531
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_1_1p_Triton]
+    nmul: 16
+    warmup_states: True
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_1_1p_Triton: [parBETA, parK0, parBETAET]
+
+    routing: True
+    nearzero: 1e-5
+
+    forcings: [prcp, tmean, pet]
+    raw_forcings: [P, Tmax, Tmin, srad_daymet]
+    attributes: []
+
+  nn:
+    name: RawFmInputsFinetuneing
+    out_size: 1
+
+    # No embedding is read -- named 'embedding_size' only so it can be pinned
+    # to the condensed daily baseline's 128 for a capacity-matched compare.
+    embedding_size: 128
+    dropout: 0.1
+
+    adapter_type: dual_residual
+    adapter_params:
+      dropout: 0.1
+      combined_dropout: 0.2
+      hidden_multiplier: 2
+
+    use_residual_lstm: True
+    lstm_hidden_size: 256
+
+    # Task-side variables from data_path -- same lists as EmbeddingPUB531.
+    forcings: [
+      P,
+      srad_daymet,
+      Tmax,
+      Tmin,
+      vp_daymet,
+    ]
+    attributes: [
+      meanelevation,
+      meanslope,
+      area_gages2,
+      forest_frac,
+      lai_max,
+      lai_diff,
+      gvf_max,
+      gvf_diff,
+      soil_depth,
+      soil_depth_statsgo,
+      porosity,
+      soil_conductivity,
+      max_water_content,
+      HWSD_sand,
+      HWSD_silt,
+      HWSD_clay,
+      carbonate_sedimentary_rocks_frac,
+      permeability,
+      meanP,
+      pet_mean,
+      aridity,
+      snowfall_fraction,
+      high_prec_freq,
+      high_prec_dur,
+      low_prec_freq,
+      low_prec_dur,
+    ]
+
+    # Foundation-model-side variables from pretrained_path. In
+    # DirectFinetuneing these define the encoder's architecture; here they ARE
+    # the additional adapter inputs -- the encoder is gone.
+    pretrained_time_series_vars: [P, RelHum, SWd, Tmax, Tmin]
+    pretrained_static_vars: [
+      ETPOT_Hargr, GMTED_aspectcosine, GMTED_elevation, GMTED_slope,
+      HWSD_clay, HWSD_gravel, HWSD_sand, HWSD_silt,
+      MODIS_NDVI, MSWEP_P, MSWX_LWd, MSWX_PET, MSWX_RH, MSWX_SWd,
+      MSWX_SpecHum, MSWX_Tmax, MSWX_Tmean, MSWX_Tmin, MSWX_Wind,
+      Permeability_no_permafrost,
+      SoilGrid2_bulk_density, SoilGrid2_clay, SoilGrid2_organic_carbon_stock,
+      SoilGrid2_sand, SoilGrid2_silt,
+      agriculture_fraction_2000, agriculture_fraction_2018,
+      carbonate_sedimentary_rocks_frac, catchsize,
+      forest_fraction_2000, forest_fraction_2018,
+      gdp_2000_buffer,
+      grassland_fraction_2000, grassland_fraction_2018,
+      intact_forest, meanP, meanTa,
+      population_density_2000_buffer, porosity,
+      seasonality_P, seasonality_PET,
+      snow_fraction, snowfall_fraction, soil_depth, soil_erosion, soil_moisture,
+      urban_fraction_2000, urban_fraction_2018,
+    ]

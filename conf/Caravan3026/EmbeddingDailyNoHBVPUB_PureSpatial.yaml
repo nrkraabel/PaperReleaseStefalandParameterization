@@ -1,0 +1,135 @@
+# @package _global_
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: caravan3026_official
+
+name: ${observations.name}/${model.nn.name}-direct/daily/${test.name}/pure_spatial
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: EmbeddingFinetuneLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
+data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
+# Condensed (streamflow-supervised, 128-dim) daily embedding -- see
+# scripts/jobs/scripts/jobs/caravan3026/01_train_condenser_daily.sh.
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_daily128_embedding.nc
+
+
+## Training ------------------------------#
+# Pure-spatial: train/test share the same calendar window (1998-2008) --
+# only the basin split differs per PUB fold. Window chosen for streamflow
+# data quality: this task file's per-year finite-coverage checked directly
+# collapses after 2012 (90.8% in 2013 -> 20.5% by 2018), while 1980-2012 is
+# consistently 85-98% (peaking ~1993-2004). 1998-2008 sits well inside that
+# high-quality band and inside 3026Carvan_refpoints.nc's 1979-2018 coverage
+# (the file the embeddings above were generated from).
+train:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  target: [streamflow]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 50
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: 1998/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+  test_epoch: 50
+  name: spatial
+  type: spatial      # dispatches to run_spatial_testing()
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4] # 5-fold PUB
+
+  # Region Configuration for PUR (unused when extent is PUB, kept for
+  # config-shape consistency with other PUB/PUR-switchable configs)
+  huc_regions:
+      - [1]
+      - [2]
+      - [3]
+      - [4]
+
+  # Region config for PUB -- gages_list_caravan3026_with_pub_and_huc.csv has
+  # PUB_ID in {1..5} for all 3026 stations, matching this exactly.
+  PUB_ids: [1, 2, 3, 4, 5]
+
+## Inference -------------------------------#
+sim:
+  start_time: 2008/01/01
+  end_time: 2008/12/31
+  batch_size: 128
+
+
+## Neural Network Model (no HBV physics) --------------#
+# Same embedding-based adapter architecture as EmbeddingDailyPUB_PureSpatial
+# but with model.phy removed entirely -- ModelHandler.list_models() then
+# builds a plain NnModel instead of DplModel (see
+# src/dmg/models/model_handler.py), so EmbeddingFinetuneing's projection
+# output is the final streamflow prediction directly, with no HBV routing
+# on top. This isolates the embedding+adapter architecture for a head-to-head
+# comparison against the CudnnLstmModel baseline in LSTMNoHBVPUB_PureSpatial.
+model:
+  rho: 365
+  warmup: 365
+  use_log_norm: []
+
+  nn:
+    name: EmbeddingFinetuneing
+    out_size: 1
+
+    # Must equal the condensed embedding's width (128).
+    embedding_size: 128
+    embedding_var_name: embedding
+    dropout: 0.1
+
+    adapter_type: dual_residual
+    adapter_params:
+      dropout: 0.1
+      combined_dropout: 0.2
+      hidden_multiplier: 2
+
+    use_residual_lstm: True
+    lstm_hidden_size: 256
+
+    # EmbeddingFinetuneLoader has no separate pretrained_path -- x_nn/c_nn
+    # come from data_path (this task file) directly, richer than the 3-var
+    # HBV forcing set since the adapter can use more raw signal.
+    forcings: [
+      total_precipitation_sum,
+      temperature_2m_mean,
+      temperature_2m_max,
+      temperature_2m_min,
+      surface_net_solar_radiation_mean,
+      surface_pressure_mean,
+      potential_evaporation_sum_FAO_PENMAN_MONTEITH,
+    ]
+    attributes: [
+      lat, lon, area,
+      ele_mt_sav, slp_dg_sav,
+      for_pc_sse,
+      cly_pc_sav, snd_pc_sav, slt_pc_sav, swc_pc_syr, soc_th_sav,
+      kar_pc_sse,
+      p_mean, pet_mean_FAO_PM, aridity_FAO_PM, seasonality_FAO_PM,
+      frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur,
+      moisture_index_FAO_PM,
+    ]

@@ -1,0 +1,150 @@
+# @package _global_
+#
+# Stage 3 template -- differentiable (delta) model with HBV physics.
+#
+# The embedding network does not predict streamflow itself: it predicts
+# HBV parameters, and the HBV bucket model produces streamflow.
+#
+# Requires the hydrodl2 package, which provides the physics models:
+#   uv pip install 'dmg[hydrodl2]'
+#
+# Temporal split as written. For a spatial holdout, copy the test: block
+# from embedding_finetune_spatial_pub.yaml.
+#
+# Run from the repo root:
+#   python src/dmg/__main__.py --config-name templates/embedding_finetune_hbv
+defaults:
+  - _self_
+  - /hydra: settings
+  - /observations: <my_dataset>    # conf/observations/<my_dataset>.yaml
+
+name: ${observations.name}/${model.phy.name[0]}_${model.nn.name}/temporal
+
+## General -------------------------------#
+mode: train_test  # train, test, train_test, sim
+multimodel_type: none
+
+seed: 111111
+cache_states: False
+device: cuda
+gpu_id: 0
+
+data_loader: EmbeddingFinetuneLoader
+data_sampler: HydroSampler
+trainer: FinetuneTrainer
+save_path: <OUTPUT_ROOT>/
+data_path: ${observations.data_path}
+# Embedding NetCDF: var `embedding`, dims (station_ids, time, embed_dim) or
+# (station_ids, embed_dim). Raw output of generate_embeddings.py, or the
+# condensed output of train_condensed_embedding.py / apply_condenser.py.
+embedding_path: <EMBEDDING_ROOT>/my_embeddings_daily.nc
+
+
+## Training ------------------------------#
+train:
+  start_time: <YYYY/MM/DD>
+  end_time: <YYYY/MM/DD>
+  target: [<streamflow_var>]
+  optimizer:
+    name: Adadelta
+  lr: 1.0
+  lr_scheduler:
+    name: none
+  loss_function:
+    name: RmseLoss
+  batch_size: 128
+  epochs: 100
+  start_epoch: 0
+  save_epoch: 25
+
+
+## Evaluation -------------------------------#
+test:
+  start_time: <YYYY/MM/DD>
+  end_time: <YYYY/MM/DD>
+  batch_size: 128
+  test_epoch: 100
+  name: temporal
+  type: temporal
+
+
+## Inference -------------------------------#
+sim:
+  start_time: <YYYY/MM/DD>
+  end_time: <YYYY/MM/DD>
+  batch_size: 128
+
+
+## Differentiable Model -----------------------------#
+model:
+  rho: 365      # training sequence length (days)
+  warmup: 365   # spin-up days prepended and excluded from the loss
+  use_log_norm: []
+
+  phy:
+    name: [Hbv_1_1p]
+    nmul: 16
+    warmup_states: True
+    dy_drop: 0.0
+    dynamic_params:
+      Hbv_1_1p: [parBETA, parK0, parBETAET]
+
+    routing: True
+    nearzero: 1e-5
+
+    # HBV's forcings are always DERIVED by the loader as [prcp, tmean, pet];
+    # this field is a label, not a lookup into data_path.
+    forcings: [prcp, tmean, pet]
+    # What the loader actually reads from data_path. POSITIONAL, fixed order:
+    #   [precipitation, Tmax, Tmin, shortwave radiation (W/m2)]
+    # tmean = (Tmax + Tmin) / 2; pet = Hargreaves-Samani from Tmax/Tmin/radiation.
+    # An optional 5th entry is used directly as measured PET instead of
+    # Hargreaves-Samani. If these variables can't be read, the loader logs a
+    # warning and continues with EMPTY physics forcings -- check the log.
+    raw_forcings: [
+      <precipitation>,
+      <temperature_max>,
+      <temperature_min>,
+      <shortwave_radiation>,
+      # <measured_pet>,
+    ]
+    attributes: []
+
+  nn:
+    name: EmbeddingFinetuneing
+    # out_size is ignored here: output width is set by HBV's learnable
+    # parameter count.
+
+    # MUST equal the last dimension of the file at embedding_path (e.g. 256
+    # for raw MFFormer embeddings, or the condenser's --condensed_width).
+    embedding_size: <embed_dim>
+    embedding_var_name: embedding
+    dropout: 0.1
+
+    adapter_type: dual_residual
+    adapter_params:
+      dropout: 0.1
+      combined_dropout: 0.2
+      hidden_multiplier: 2
+
+    use_residual_lstm: True
+    lstm_hidden_size: 256
+
+    # Architecture ablations: none (full model, default) | linear_probe |
+    # embedding_as_input. See embedding_finetuneing.py.
+    # ablation_mode: none
+
+    # Subsets of observations.all_forcings / all_attributes. Both lists must
+    # be non-empty.
+    forcings: [
+      <precipitation>,
+      <temperature_max>,
+      <temperature_min>,
+      <shortwave_radiation>,
+    ]
+    attributes: [
+      lat, lon, area,
+      <elevation>,
+      <slope>,
+      <aridity>,
+    ]
