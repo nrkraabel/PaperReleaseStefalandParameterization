@@ -18,15 +18,9 @@ gpu_id: 0
 data_loader: EmbeddingFinetuneLoader
 data_sampler: HydroSampler
 trainer: FinetuneTrainer
-save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/Embedding40MFinalized/
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/EmbeddingStefaLand/
 data_path: ${oc.env:DMG_DATA_ROOT}/Camels_Pretrain.nc
-pretrained_path: ${oc.env:DMG_DATA_ROOT}/CamelsPretrain/Camels_refpoints_1979_2014.nc
-# Foundation model: 40MillionParamsep20.pt ("40MFinalized", d_model=512).
-# Precomputed on the extended 1979-2014 reference series (see
-# scripts/jobs/extended_1980_1999/gen_embeddings_extended_40mfinalized512.sh)
-# so it covers the 1980-1999 train window below. Daily resolution required,
-# same reasoning as conf/EmbeddingPUB531.yaml.
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Camels531Extended_40MFinalized512/Camels531Extended_40MFinalized512_embeddings_daily.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Camels531_StefaLand256_condenser_daily64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -108,8 +102,8 @@ model:
     out_size: 1
 
     # Must equal the last dim of the embedding variable in embedding_path
-    # (512 for the 40MFinalized checkpoint).
-    embedding_size: 512
+    # (256 for StefaLandGlobal20.pt).
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 

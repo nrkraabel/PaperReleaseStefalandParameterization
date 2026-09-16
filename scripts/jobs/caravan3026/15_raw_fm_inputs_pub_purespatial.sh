@@ -12,10 +12,9 @@
 #SBATCH --output=%x_%A_%a.out
 
 # Control for the daily-embedding ablation set: no foundation model. The raw
-# MFFormer input variables (5 ts + 48 static from 3026Carvan_refpoints.nc) go
+# StefaLand input variables (5 ts + 48 static from 3026Carvan_refpoints.nc) go
 # straight into the residual adapter as additional inputs; no encoder, no
 # embedding file.
-#
 # Resources follow scripts/jobs/caravan3026/14_nopretrain_hbv_pub_purespatial.sh rather than the
 # daily-embedding jobs: this config reads the same two NetCDF sources through
 # the same NnDualLoader, and never opens the 41GB daily embedding file that

@@ -9,11 +9,8 @@ import torch
 import torch.nn as nn
 from models.neural_networks.adapters.build_adapter import apply_adapter, build_adapter
 from models.neural_networks.cudnn_lstm import CudnnLstm
-from models.neural_networks.transformer.MFFormerDecLSTM import (
-    Model as MFFormerDecLSTM,
-)
-from models.neural_networks.transformer.StefaLand_PatchTokens_TFT import (
-    Model as StefaLandPatchTFT,
+from models.neural_networks.transformer.StefaLandDecLSTM import (
+    Model as StefaLandDecLSTM,
 )
 from omegaconf import DictConfig, OmegaConf
 
@@ -41,17 +38,12 @@ def build_pretrained_encoder(
     pretrained_static_vars: List[str],
     pretrained_model_path: Optional[str],
     freeze: bool = True,
-    pretrained_type: str = 'stefaland_patch_tft',
+    pretrained_type: str = 'stefaland_dec_lstm',
 ) -> nn.Module:
     """Build a frozen pretrained encoder and load checkpoint weights into it.
 
-    pretrained_type selects the architecture: 'stefaland_patch_tft' (default,
-    the PatchTST+TFT tokenizer/depatcher model the ICLM/40M-param checkpoints
-    use) or 'mfformer' (MFFormer_dec_LSTM's TransformerBackbone-encoder +
-    single-layer-LSTM-decoder architecture, which is what MfformerGlobal20.pt
-    was actually pretrained with -- verified via an exact 485/485 name+shape
-    checkpoint parameter match, vs. ~56% when this used to always build a
-    StefaLandPatchTFT regardless of pretrained_type).
+    The architecture is StefaLandDecLSTM: a TransformerBackbone encoder
+    with a single-layer LSTM decoder.
     """
     cfg = type(
         'Config',
@@ -61,7 +53,7 @@ def build_pretrained_encoder(
             'num_heads': num_heads,
             'dropout': dropout,
             'num_enc_layers': num_enc_layers,
-            # Gates whether MFFormerDecLSTM.forward() runs its decoder LSTM
+            # Gates whether StefaLandDecLSTM.forward() runs its decoder LSTM
             # before the masked-reconstruction output heads; the decoder
             # submodule is always registered regardless (needed either way
             # for the checkpoint's weights to load), and encode_with_pretrained
@@ -88,10 +80,12 @@ def build_pretrained_encoder(
             'group_mask_dict': {},
         },
     )
-    if pretrained_type == 'mfformer':
-        model = MFFormerDecLSTM(cfg).float()
-    else:
-        model = StefaLandPatchTFT(cfg).float()
+    if pretrained_type != 'stefaland_dec_lstm':
+        raise ValueError(
+            f"Unknown pretrained_type '{pretrained_type}'. This release "
+            "ships one frozen encoder, 'stefaland_dec_lstm'."
+        )
+    model = StefaLandDecLSTM(cfg).float()
     return _load_pretrained_weights(model, pretrained_model_path, freeze)
 
 
@@ -269,7 +263,7 @@ class DirectFinetuneing(nn.Module):
             'num_enc_layers': nn_config.get('num_enc_layers', 4),
             'd_ffd': nn_config.get('d_ffd', 512),
             'pretrained_model': nn_config.get('pretrained_model'),
-            'pretrained_type': nn_config.get('pretrained_type', 'stefaland_patch_tft'),
+            'pretrained_type': nn_config.get('pretrained_type', 'stefaland_dec_lstm'),
             'adapter_type': nn_config.get('adapter_type', 'dual_residual'),
             'adapter_params': nn_config.get('adapter_params', {}),
         }

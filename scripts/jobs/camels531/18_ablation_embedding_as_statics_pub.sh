@@ -12,8 +12,7 @@
 #SBATCH --output=%x_%A_%a.out
 
 # Ablation on the proposed method for the Extended1980_1999 Camels531
-# experiment: the condensed (128-d) daily MFFormer256 embedding, 10-fold PUB.
-#
+# experiment: the condensed (64-d) daily StefaLand256 embedding, 10-fold PUB.
 # Deliberately launched as the SAME command as the baseline
 # test_condensed_embedding_camels531_daily_pub.sh with one extra override, so
 # config, window (train 1980/10-1999/09, test 1995/10-1999/09), folds, seeds
@@ -32,8 +31,8 @@ COND_DIR=${DMG_EMBEDDING_ROOT}/Condensers
 python ${DMG_REPO}/src/dmg/__main__.py \
     --config-name EmbeddingPUB531 \
     seed=${SEED} \
-    embedding_path=${COND_DIR}/Camels531_MFFormer256_condenser_daily_embedding.nc \
-    model.nn.embedding_size=128 \
+    embedding_path=${COND_DIR}/Camels531_StefaLand256_condenser_daily_embedding.nc \
+    model.nn.embedding_size=64 \
     +model.nn.ablation_mode=embedding_as_input model.nn.adapter_type=none model.nn.use_residual_lstm=False \
     save_path=$OUT_DIR \
     +out_path=$OUT_DIR \

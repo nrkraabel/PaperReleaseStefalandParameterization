@@ -20,8 +20,6 @@ _STANDARD_ADAPTERS = (
     'bottleneck',
     'moe',
     'dual_residual',
-    'kriging_locality',
-    'kriging_relational',
 )
 
 
@@ -83,58 +81,6 @@ def build_adapter(
             params.get('num_experts', 4),
             params.get('expert_size', d_model),
         )
-    elif adapter_type == 'kriging_locality':
-        from models.neural_networks.adapters.kriging_locality_adapter import (
-            KrigingLocalityAdapter,
-        )
-
-        return KrigingLocalityAdapter(
-            d_model=d_model,
-            n_static=n_static,
-            n_time=n_time,
-            key_dim=params.get('key_dim', 64),
-            max_bank_size=params.get('max_bank_size', 1024),
-            bank_subsample=params.get('bank_subsample', 256),
-            bank_dropout=params.get('bank_dropout', 0.3),
-            dropout=params.get('dropout', 0.1),
-            use_fm_embeddings=params.get('use_fm_embeddings', False),
-        )
-    elif adapter_type == 'kriging_relational':
-        from models.neural_networks.adapters.kriging_relational_adapter import (
-            RelationalKrigingAdapter,
-        )
-
-        return RelationalKrigingAdapter(
-            d_model=d_model,
-            n_static=n_static,
-            n_time=n_time,
-            key_dim=params.get('key_dim', 64),
-            max_bank_size=params.get('max_bank_size', 1024),
-            bank_subsample=params.get('bank_subsample', 256),
-            bank_dropout=params.get('bank_dropout', 0.3),
-            dropout=params.get('dropout', 0.1),
-            use_fm_embeddings=params.get('use_fm_embeddings', False),
-        )
-    elif adapter_type == 'kriging_obs':
-        from models.neural_networks.adapters.kriging_obs_adapter import (
-            KrigingObsAdapter,
-        )
-
-        return KrigingObsAdapter(
-            d_model=d_model,
-            n_static=n_static,
-            n_time=n_time,
-            key_dim=params.get('key_dim', 64),
-            phi_hidden=tuple(params.get('phi_hidden', [128, 128])),
-            rho_hidden=tuple(params.get('rho_hidden', [128])),
-            weight_hidden=tuple(params.get('weight_hidden', [64, 64])),
-            max_bank_size=params.get('max_bank_size', 1024),
-            bank_subsample=params.get('bank_subsample', 256),
-            bank_dropout=params.get('bank_dropout', 0.3),
-            dropout=params.get('dropout', 0.1),
-            use_gate=params.get('use_gate', True),
-            use_fm_embeddings=params.get('use_fm_embeddings', False),
-        )
     elif adapter_type == 'none':
         return nn.Identity()
     else:
@@ -153,8 +99,6 @@ def apply_adapter(
     """Call `adapter` with the argument set its type expects."""
     if adapter_type in _STANDARD_ADAPTERS:
         return adapter(hidden, batch_x_ft, batch_c_ft)
-    elif adapter_type == 'kriging_obs':
-        return adapter(hidden, batch_x_ft, batch_c_ft, obs=obs, obs_mask=obs_mask)
     elif adapter_type == 'none':
         return adapter(hidden)
     else:

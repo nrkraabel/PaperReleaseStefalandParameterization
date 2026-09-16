@@ -1,14 +1,11 @@
 # @package _global_
-#
 # ABLATION 2 of 3 on EmbeddingDailyPUB_PureSpatial: linear probing.
-#
 # The network is reduced to Linear(LayerNorm(embedding)) -> HBV parameters.
 # No adapter, no LSTM decoder, and the task forcings/attributes never reach
 # the network at all (they are still loaded, so normalization statistics and
 # the PUB basin splits stay identical to the baseline's -- only the model
 # consumes less). See ablation_mode in
 # src/dmg/models/neural_networks/embedding_finetuneing.py.
-#
 # This is the standard frozen-representation probe: the embedding is
 # precomputed and never updated, so what is being measured is how much of the
 # HBV parameterization is linearly decodable from the embedding alone. The
@@ -35,7 +32,7 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
 data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_daily128_embedding.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_StefaLand256_condenser_daily64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -117,7 +114,7 @@ model:
     name: EmbeddingFinetuneing
     out_size: 1
 
-    embedding_size: 128
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 

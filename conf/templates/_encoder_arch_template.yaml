@@ -1,5 +1,4 @@
 # Stage 0 only (optional) -- NOT a runnable dmg experiment config.
-#
 # Loaded directly by scripts/generate_embeddings.py via plain OmegaConf.load
 # (not Hydra), purely for its model.nn architecture fields, the frozen
 # foundation-model checkpoint path, and the dataset to encode. Skip this
@@ -19,8 +18,8 @@ model:
     d_ffd: 512
     dropout: 0.1
 
-    # 'mfformer' (MFFormerDecLSTM) or 'stefaland_patch_tft'.
-    pretrained_type: mfformer
+    # 'stefaland_dec_lstm' (StefaLandDecLSTM) or 'stefaland_dec_lstm'.
+    pretrained_type: stefaland_dec_lstm
     pretrained_model: <CHECKPOINT_ROOT>/my_foundation_model.pt
 
     # IMPORTANT: read these lists off the checkpoint itself, not from a

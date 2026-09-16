@@ -14,7 +14,6 @@
 # Ablation: daily embedding + HBV, linear probe (ablation_mode: linear_probe).
 # Network is Linear(LayerNorm(embedding)) -> HBV parameters; no adapter, no
 # LSTM, no task forcings/attributes.
-#
 # Same 3-seed / 5-fold-PUB protocol as the baseline
 # scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh. The 400GB budget is kept even though
 # this model is tiny: peak memory here comes from the 41GB embedding file and

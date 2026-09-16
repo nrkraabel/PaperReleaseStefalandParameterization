@@ -1,16 +1,12 @@
 # @package _global_
-#
 # Stage 3 template -- spatial holdout (PUB: prediction in ungauged basins).
-#
 # Same model as embedding_finetune_temporal.yaml, but evaluated by k-fold
 # basin holdout: each fold trains on every station outside one PUB group and
 # tests on the held-out group. No physics model, hydrodl2 NOT required.
-#
 # Requires in the observations config:
 #   gage_split_file  CSV with columns `gage` and `PUB_ID`
 #   station_ids      one id per line, same order as the task NetCDF
 # Station ids must be integer-castable (see docs/embeddings/README.md).
-#
 # Run from the repo root:
 #   python src/dmg/__main__.py --config-name templates/embedding_finetune_spatial_pub
 defaults:
@@ -97,7 +93,7 @@ model:
     out_size: 1
 
     # MUST equal the last dimension of the file at embedding_path (e.g. 256
-    # for raw MFFormer embeddings, or the condenser's --condensed_width).
+    # for raw StefaLand embeddings, or the condenser's --condensed_width).
     embedding_size: <embed_dim>
     embedding_var_name: embedding
     dropout: 0.1

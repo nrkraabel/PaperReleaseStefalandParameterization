@@ -18,15 +18,9 @@ gpu_id: 0
 data_loader: EmbeddingFinetuneLoader
 data_sampler: HydroSampler
 trainer: FinetuneTrainer
-save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/EmbeddingICLM256/
+save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/EmbeddingStefaLand/
 data_path: ${oc.env:DMG_DATA_ROOT}/Camels_Pretrain.nc
-pretrained_path: ${oc.env:DMG_DATA_ROOT}/CamelsPretrain/Camels_refpoints_1979_2014.nc
-# Foundation model: ICLMOfficial.pt (d_model=256). Precomputed on the extended
-# 1979-2014 reference series (see
-# scripts/jobs/extended_1980_1999/gen_embeddings_extended_iclm256.sh) so it
-# covers the 1980-1999 train window below. Daily resolution required, same
-# reasoning as conf/EmbeddingPUB531.yaml.
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Camels531Extended_ICLMOfficial256/Camels531Extended_ICLMOfficial256_embeddings_daily.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Camels531_StefaLand256_condenser_daily64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -55,8 +49,8 @@ test:
   test_epoch: 50
   name: spatial
   type: spatial      # dispatches to run_spatial_testing()
-  extent: PUR
-  holdout_indexs: [0,1,2,3,4,5,6] # List based on region config (0-6 PUR, 0-10 PUB)
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4,5,6,7,8,9] # List based on region config (0-6 PUR, 0-10 PUB)
 
   # Region Configuration for PUR (only needed when extent is PUR)
   huc_regions:
@@ -108,8 +102,8 @@ model:
     out_size: 1
 
     # Must equal the last dim of the embedding variable in embedding_path
-    # (256 for ICLMOfficial.pt).
-    embedding_size: 256
+    # (256 for StefaLandGlobal20.pt).
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 

@@ -14,8 +14,7 @@
 # and test both over 1997-2018, 100 epochs. 400GB/72h -- daily condensed
 # embedding file is 15.3GB and this doubles the PUB variant's epoch count,
 # so keeping the same generous memory budget plus more time.
-#
-# Depends on: scripts/data_prep/convert_caravan3026_task_station_schema.sh.
+# Depends on: the station-id schema fix.
 
 source "${DMG_ENV}/bin/activate"
 export PYTHONPATH="$PWD:$PYTHONPATH"

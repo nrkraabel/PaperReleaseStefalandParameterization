@@ -18,8 +18,7 @@
 # accumulates every holdout's predictions/targets in memory -- peak memory
 # grows with holdout count. This daily condensed embedding file is 15.3GB
 # (bigger than that run's 7.2GB), so keeping the same generous budget.
-#
-# Depends on: scripts/data_prep/convert_caravan3026_task_station_schema.sh having
+# Depends on: the station-id schema fix having
 # completed (writes the station_ids-fixed task file this config's data_path
 # points to).
 

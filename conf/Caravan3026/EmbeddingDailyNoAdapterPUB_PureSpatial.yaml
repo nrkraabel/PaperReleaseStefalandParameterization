@@ -1,12 +1,9 @@
 # @package _global_
-#
 # ABLATION 1 of 3 on EmbeddingDailyPUB_PureSpatial: remove the adapter layer.
-#
 # Identical to EmbeddingDailyPUB_PureSpatial in every respect except
 # model.nn.adapter_type, which becomes 'none' -> build_adapter() returns
 # nn.Identity (src/dmg/models/neural_networks/adapters/build_adapter.py), so
 # the LayerNorm'd embedding reaches the LSTM decoder untouched.
-#
 # Note what this does and does not isolate: use_residual_lstm stays True, so
 # the task forcings and static attributes still enter through pre_lstm/
 # post_lstm. That is deliberate -- the only removed component is the adapter
@@ -33,9 +30,9 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
 data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
-# Condensed (streamflow-supervised, 128-dim) daily embedding -- see
-# scripts/jobs/scripts/jobs/caravan3026/01_train_condenser_daily.sh.
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_daily128_embedding.nc
+# Condensed (reconstruction-trained, 64-dim) daily embedding -- see
+# scripts/jobs/caravan3026/01_train_condenser_daily.sh.
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_StefaLand256_condenser_daily64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -123,8 +120,8 @@ model:
     name: EmbeddingFinetuneing
     out_size: 1
 
-    # Must equal the condensed embedding's width (128).
-    embedding_size: 128
+    # Must equal the condensed embedding's width (64).
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 

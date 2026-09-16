@@ -20,7 +20,7 @@ data_sampler: HydroSampler
 trainer: Trainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/LSTMAlphaEarth/
 # AlphaEarth static attributes (ae_00..ae_63) merged onto a full copy of
-# Camels_Pretrain.nc (scripts/data_prep/merge_alphaearth_camels_pretrain.py), so forcings
+# Camels_Pretrain.nc (scripts/merge_alphaearth_camels_pretrain.py), so forcings
 # here are bit-identical to every other Camels_Pretrain.nc-based config in this
 # folder rather than the different NLDAS-extended product in
 # CAMELS_Frederik_with_alphaearth.nc.

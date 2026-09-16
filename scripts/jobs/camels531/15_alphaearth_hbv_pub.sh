@@ -12,7 +12,7 @@
 #SBATCH --output=%x_%A_%a.out
 
 # Depends on Camels_Pretrain_AlphaEarth.nc existing
-# (scripts/data_prep/merge_alphaearth_camels_pretrain.py) -- no embedding-gen job
+# (scripts/merge_alphaearth_camels_pretrain.py) -- no embedding-gen job
 # dependency, just the one-off data merge.
 
 source "${DMG_ENV}/bin/activate"

@@ -4,7 +4,7 @@ EmbeddingFinetuneing asks what a pretrained foundation model's *output* buys
 you. This model asks the control question: what do the foundation model's own
 *inputs* buy you, with the encoder removed entirely?
 
-The raw variables the MFFormer would have consumed
+The raw variables the StefaLand would have consumed
 (``pretrained_time_series_vars`` / ``pretrained_static_vars``, read from
 ``pretrained_path`` by NnDualLoader) are handed to the adapter as additional
 time/static inputs alongside the task's own forcings/attributes. Nothing is

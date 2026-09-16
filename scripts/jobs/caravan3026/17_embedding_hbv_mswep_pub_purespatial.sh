@@ -16,7 +16,6 @@
 # Identical to its ERA5-Land twin (scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh) except for
 # the precipitation product -- see the config header for the full list of
 # what does and does not change.
-#
 # Resources, vs the ERA5 twin:
 #   * mem cut from 400GB to 150GB. Observed MaxRSS across the six ERA5
 #     3-seed runs was 88-91 GB (embedding) and 12.6-13.1 GB (LSTM), so this
@@ -30,11 +29,10 @@
 #     asking for 8 would make CPU, not GPU, the limit.
 #   * time trimmed to 20:00:00 (ERA5 twins ran ~9h20m), which also makes these
 #     eligible for backfill.
-#
 # Depends on:
-#   * scripts/data_prep/mswep_forcing/03_merge_into_caravan.py (writes the
+#   * caravan_zenodo/mswep_forcing/03_merge_into_caravan.py (writes the
 #     _MSWEP.nc this config reads)
-#   * scripts/data_prep/mswep_forcing/04_fill_interior_nans.py -- MUST have run.
+#   * caravan_zenodo/mswep_forcing/04_fill_interior_nans.py -- MUST have run.
 #     The merged file had one interior NaN day (label 2001-12-31) for 284 US
 #     camels basins, and loader_utils.calc_stats is not nan-aware, so that
 #     single NaN would have silently zeroed the entire precipitation channel.

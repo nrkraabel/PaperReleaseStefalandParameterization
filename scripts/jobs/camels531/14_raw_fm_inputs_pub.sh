@@ -11,10 +11,9 @@
 #SBATCH --array=0-2
 #SBATCH --output=%x_%A_%a.out
 
-# No-foundation-model control: the raw MFFormer input variables (5 ts + 48
+# No-foundation-model control: the raw StefaLand input variables (5 ts + 48
 # static, no Runoff) go straight into the residual adapter as additional
 # inputs. No encoder, no embedding file. 10-fold PUB, 3 seeds.
-#
 # Resources match scripts/jobs/camels531/13_nopretrain_hbv_pub.sh, the closest precedent for this
 # data path (same NnDualLoader reading the same two NetCDF sources).
 

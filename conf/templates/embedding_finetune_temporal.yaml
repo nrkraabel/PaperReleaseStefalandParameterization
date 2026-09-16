@@ -1,12 +1,9 @@
 # @package _global_
-#
 # Stage 3 template -- RECOMMENDED STARTING POINT.
-#
 # Fine-tune on precomputed (optionally condensed) embeddings, predicting
 # streamflow directly. No physics model: model.phy is absent, so the
 # hydrodl2 package is NOT required. Train and test are split by time over
 # all stations -- no station list or gage-split CSV needed.
-#
 # Run from the repo root:
 #   python src/dmg/__main__.py --config-name templates/embedding_finetune_temporal
 defaults:
@@ -82,7 +79,7 @@ model:
     out_size: 1
 
     # MUST equal the last dimension of the file at embedding_path (e.g. 256
-    # for raw MFFormer embeddings, or the condenser's --condensed_width).
+    # for raw StefaLand embeddings, or the condenser's --condensed_width).
     embedding_size: <embed_dim>
     embedding_var_name: embedding
     dropout: 0.1

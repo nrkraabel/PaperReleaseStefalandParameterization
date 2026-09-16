@@ -4,7 +4,7 @@ defaults:
   - /hydra: settings
   - /observations: caravan3026_official
 
-name: ${observations.name}/${model.nn.name}NoPretraining/${model.nn.adapter_type}/${test.name}
+name: ${observations.name}/${model.nn.name}NoPretraining/${model.nn.adapter_type}/${test.name}/spatial_temporal
 
 ## General -------------------------------#
 mode: train_test
@@ -24,17 +24,9 @@ pretrained_path: ${oc.env:DMG_DATA_ROOT}/CarvanPretrain/3026Carvan_refpoints.nc
 
 
 ## Training ------------------------------#
-# Full-range temporal test (not spatial PUB): ALL 3026 basins, train and
-# test share the same 1997-2012 window (capped short of the full 1997-2018
-# range: this task file's per-year finite-coverage checked directly
-# collapses after 2012 -- 90.8% in 2013 -> 20.5% by 2018 -- so 2013-2018 was
-# dropped to avoid scoring against a rapidly-thinning, non-representative
-# station set). Matches the HBVGlobalLSTMTemporal.yaml pattern's
-# test.type: temporal (no extent/holdout_indexs/PUB_ids/huc_regions fields
-# at all) otherwise.
 train:
-  start_time: 1997/01/01
-  end_time: 2012/12/31
+  start_time: 1987/01/01
+  end_time: 1997/12/31
   target: [streamflow]
   optimizer:
     name: Adadelta
@@ -44,19 +36,29 @@ train:
   loss_function:
     name: RmseLoss
   batch_size: 128
-  epochs: 100
+  epochs: 50
   start_epoch: 0
   save_epoch: 25
 
 
 ## Evaluation -------------------------------#
 test:
-  start_time: 1997/01/01
-  end_time: 2012/12/31
+  start_time: 1998/01/01
+  end_time: 2008/12/31
   batch_size: 128
-  test_epoch: 100
-  name: temporal
-  type: temporal
+  test_epoch: 50
+  name: spatial
+  type: spatial
+  extent: PUB
+  holdout_indexs: [0,1,2,3,4]
+
+  huc_regions:
+      - [1]
+      - [2]
+      - [3]
+      - [4]
+
+  PUB_ids: [1, 2, 3, 4, 5]
 
 ## Inference -------------------------------#
 sim:
@@ -115,9 +117,7 @@ model:
     num_dec_layers: 2
     d_ffd: 512
 
-    # No pretrained_model line -- random init, not MfformerGlobal20.pt's
-    # weights.
-    pretrained_type: mfformer
+    pretrained_type: stefaland_dec_lstm
     freeze_pretrained: False
 
     adapter_type: dual_residual
@@ -127,7 +127,10 @@ model:
     # from data_path (this task file) by NnDualLoader, feeding the
     # adapter+LSTM decoder directly (xc_nn_norm). Separate data source from
     # pretrained_time_series_vars/pretrained_static_vars below (encoder
-    # architecture, read from pretrained_path).
+    # architecture, read from pretrained_path) -- see
+    # direct_finetuneing.py's DirectFinetuneing.__init__ and
+    # nn_dual_loader.py's _preprocess_data. Same task-file variable set as
+    # the LSTMHBVPUB/LSTMNoHBVPUB baselines' nn block.
     forcings: [
       total_precipitation_sum,
       temperature_2m_mean,
@@ -149,8 +152,8 @@ model:
     ]
 
     # Encoder architecture only (5 ts vars, 48 static vars, verified exact
-    # match for MfformerGlobal20.pt -- see
-    # conf/camels531/_MFFormerArchTemplate.yaml), read from
+    # match for StefaLandGlobal20.pt -- see
+    # conf/camels531/_StefaLandArchTemplate.yaml), read from
     # pretrained_path (3026Carvan_refpoints.nc). Unrelated to the task-file
     # forcings/attributes above.
     pretrained_time_series_vars: [P, RelHum, SWd, Tmax, Tmin]

@@ -4,7 +4,7 @@ defaults:
   - /hydra: settings
   - /observations: caravan3026_official
 
-name: ${observations.name}/${model.nn.name}NoPretraining/${model.nn.adapter_type}/${test.name}/spatial_temporal
+name: ${observations.name}/${model.nn.name}NoPretraining/${model.nn.adapter_type}/${test.name}/pure_spatial
 
 ## General -------------------------------#
 mode: train_test
@@ -20,13 +20,20 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
 data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
+# This config DOES run data through the StefaLandDecLSTM architecture (just
+# randomly initialized, not loading StefaLandGlobal20.pt weights) -- per this
+# repo's rule, pretrained_path IS allowed to point at the foundation-model
+# schema file here (unlike the plain-LSTM/HBV-LSTM baselines, which must
+# never use it). 3026Carvan_refpoints.nc already has a correct station_ids
+# coordinate and the exact P/RelHum/SWd/Tmax/Tmin + 48-static-var schema the
+# StefaLandDecLSTM embedding layers are sized for.
 pretrained_path: ${oc.env:DMG_DATA_ROOT}/CarvanPretrain/3026Carvan_refpoints.nc
 
 
 ## Training ------------------------------#
 train:
-  start_time: 1987/01/01
-  end_time: 1997/12/31
+  start_time: 1998/01/01
+  end_time: 2008/12/31
   target: [streamflow]
   optimizer:
     name: Adadelta
@@ -117,20 +124,25 @@ model:
     num_dec_layers: 2
     d_ffd: 512
 
-    pretrained_type: mfformer
+    # No pretrained_model line -- random init, not StefaLandGlobal20.pt's
+    # weights (see direct_finetuneing.py's _load_pretrained_weights: path
+    # falls to None, logs "using random init").
+    pretrained_type: stefaland_dec_lstm
     freeze_pretrained: False
 
-    adapter_type: dual_residual
+    adapter_type: dual_residual  # Options: none, gated, feedforward, conv, attention, bottleneck, moe, dual_residual
     use_residual_lstm: True
 
     # 'forcings'/'attributes' (unprefixed) are the FINE-TUNING vars -- read
     # from data_path (this task file) by NnDualLoader, feeding the
-    # adapter+LSTM decoder directly (xc_nn_norm). Separate data source from
-    # pretrained_time_series_vars/pretrained_static_vars below (encoder
-    # architecture, read from pretrained_path) -- see
-    # direct_finetuneing.py's DirectFinetuneing.__init__ and
-    # nn_dual_loader.py's _preprocess_data. Same task-file variable set as
-    # the LSTMHBVPUB/LSTMNoHBVPUB baselines' nn block.
+    # adapter+LSTM decoder directly (xc_nn_norm). This is a SEPARATE data
+    # source from pretrained_time_series_vars/pretrained_static_vars below
+    # (which define the frozen/trainable encoder's architecture and are read
+    # from pretrained_path instead) -- see direct_finetuneing.py's
+    # DirectFinetuneing.__init__ (self.finetuning_ts_vars vs.
+    # self.pretrained_ts_vars) and nn_dual_loader.py's _preprocess_data
+    # (self.task_nc_path vs. self.pretrained_nc_path). Same task-file
+    # variable set as the LSTMHBVPUB/LSTMNoHBVPUB baselines' nn block.
     forcings: [
       total_precipitation_sum,
       temperature_2m_mean,
@@ -151,11 +163,6 @@ model:
       moisture_index_FAO_PM,
     ]
 
-    # Encoder architecture only (5 ts vars, 48 static vars, verified exact
-    # match for MfformerGlobal20.pt -- see
-    # conf/camels531/_MFFormerArchTemplate.yaml), read from
-    # pretrained_path (3026Carvan_refpoints.nc). Unrelated to the task-file
-    # forcings/attributes above.
     pretrained_time_series_vars: [P, RelHum, SWd, Tmax, Tmin]
     pretrained_static_vars: [
       ETPOT_Hargr, GMTED_aspectcosine, GMTED_elevation, GMTED_slope,

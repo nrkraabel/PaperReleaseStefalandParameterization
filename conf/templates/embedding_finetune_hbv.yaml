@@ -1,16 +1,11 @@
 # @package _global_
-#
 # Stage 3 template -- differentiable (delta) model with HBV physics.
-#
 # The embedding network does not predict streamflow itself: it predicts
 # HBV parameters, and the HBV bucket model produces streamflow.
-#
 # Requires the hydrodl2 package, which provides the physics models:
 #   uv pip install 'dmg[hydrodl2]'
-#
 # Temporal split as written. For a spatial holdout, copy the test: block
 # from embedding_finetune_spatial_pub.yaml.
-#
 # Run from the repo root:
 #   python src/dmg/__main__.py --config-name templates/embedding_finetune_hbv
 defaults:
@@ -116,7 +111,7 @@ model:
     # parameter count.
 
     # MUST equal the last dimension of the file at embedding_path (e.g. 256
-    # for raw MFFormer embeddings, or the condenser's --condensed_width).
+    # for raw StefaLand embeddings, or the condenser's --condensed_width).
     embedding_size: <embed_dim>
     embedding_var_name: embedding
     dropout: 0.1

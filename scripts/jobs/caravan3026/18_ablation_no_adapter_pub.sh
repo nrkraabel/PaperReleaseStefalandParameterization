@@ -12,7 +12,6 @@
 #SBATCH --output=%x_%A_%a.out
 
 # Ablation: daily embedding + HBV, adapter layer removed (adapter_type: none).
-#
 # Same 3-seed / 5-fold-PUB protocol and the same 400GB budget as the baseline
 # scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh -- run_spatial_testing() rebuilds the
 # model/loader/trainer per holdout AND accumulates every holdout's

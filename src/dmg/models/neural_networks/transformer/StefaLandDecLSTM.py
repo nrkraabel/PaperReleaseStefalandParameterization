@@ -13,19 +13,9 @@ from torch import nn
 
 class Model(nn.Module):
     """
-    MFFormer variant with a single-layer LSTM decoder (encoder stays a
-    TransformerBackbone) instead of MFFormer.py's Transformer decoder or
-    MFFormerTFT.py's TFT-style positional encoding + LSTM projection heads.
-
-    Ported from MFFormer_dec_LSTM.py (the external 30.MFFormer/MFFormer repo)
-    to dmg_dev's local layer implementations. This is the architecture
-    MfformerGlobal20.pt was actually pretrained with -- verified by loading
-    its checkpoint into this class and getting a 485/485 exact name+shape
-    parameter match (vs. ~56% when DirectFinetuneing/generate_embeddings.py
-    previously built a StefaLandPatchTFT for it instead, which has a
-    completely different tokenizer/depatcher structure this checkpoint's
-    state_dict doesn't contain at all -- e.g. no 'decoder.weight_hh_l0',
-    the plain nn.LSTM decoder's parameter names, which only this class has).
+    StefaLand encoder (TransformerBackbone) with a single-layer LSTM
+    decoder. This is the architecture StefaLandGlobal20.pt was pretrained
+    with, and the checkpoint loads into it with an exact parameter match.
     """
 
     def __init__(self, configs):
@@ -198,14 +188,9 @@ class Model(nn.Module):
 
         hidden_states = self.enc_2_dec_embedding(hidden_states)
 
-        # Encoder's own latent representation, pre-decoder -- same role as
-        # StefaLandPatchTFT's encoder_hidden_time_series/encoder_hidden_static
-        # (its pre-depatcher hidden state), so encode_with_pretrained() can
-        # consume either model class through the same interface. This is
-        # deliberately NOT run through self.decoder: the LSTM decoder below
-        # is part of the masked-reconstruction pretraining head (in the same
-        # role as StefaLandPatchTFT's depatcher), not the representation
-        # downstream fine-tuning should consume.
+        # The encoder's own latent representation, taken before the decoder.
+        # The LSTM decoder below belongs to the masked-reconstruction
+        # pretraining head, not to what fine-tuning should consume.
         encoder_hidden = hidden_states[:, -enc_seq_len:, :]
         encoder_hidden_time_series = encoder_hidden[:, :-1, :]  # [B, T, d_model]
         encoder_hidden_static = encoder_hidden[:, -1, :]  # [B, d_model]

@@ -12,7 +12,6 @@
 
 # Stage 3: fine-tune on the (condensed) embeddings. A GPU is required -- the
 # LSTM decoder calls .cuda() unconditionally.
-#
 # CONFIG is a path under conf/ without the .yaml extension. Copy a template
 # to your own name first rather than editing the template in place.
 

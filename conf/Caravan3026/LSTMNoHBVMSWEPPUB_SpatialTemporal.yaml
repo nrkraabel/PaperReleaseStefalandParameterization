@@ -8,7 +8,6 @@ name: ${observations.name}/${model.nn.name}-direct-mswep/${test.name}/spatial_te
 
 # ===========================================================================
 # MSWEP precipitation variant of LSTMNoHBVPUB_SpatialTemporal.yaml.
-#
 # The ONLY differences from that baseline are:
 #   * data_path and pretrained_path -> the _MSWEP.nc file, which is the same
 #     Caravan CAMELS-only task file plus one extra variable.
@@ -17,15 +16,13 @@ name: ${observations.name}/${model.nn.name}-direct-mswep/${test.name}/spatial_te
 # Architecture, windows, PUB folds, seeds, optimizer and attributes are
 # byte-for-byte the baseline's, so a difference in scores is attributable to
 # the precipitation product alone.
-#
 # `total_precipitation_sum_MSWEP` is MSWEP v2.8 (0.1 deg, gauge+satellite+
 # reanalysis) reduced to each catchment polygon with the same cos(lat)-
 # weighted exact-intersection average Caravan uses for its own ERA5-Land
-# means -- see scripts/data_prep/mswep_forcing/README.md. It is aligned to the
+# means -- see caravan_zenodo/mswep_forcing/README.md. It is aligned to the
 # file's TRUE dates, which the `time` coordinate mislabels by up to a year
 # per sub-dataset; column-for-column it is in register with every other
 # forcing here, which is what matters.
-#
 # Two known, deliberate inconsistencies:
 #   1. MSWEP starts 1979-01-01, so columns before each station's 1979 column
 #      are NaN. Both windows used here (train 1987-1997 / 1998-2008, minus

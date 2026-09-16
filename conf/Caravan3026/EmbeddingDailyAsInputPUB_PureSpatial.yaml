@@ -1,21 +1,17 @@
 # @package _global_
-#
 # ABLATION 3 of 3 on EmbeddingDailyPUB_PureSpatial: daily embedding used as
 # ordinary LSTM input channels, replacing the task's static attributes.
-#
-# The 128-d daily embedding is concatenated to the 7 task forcings and fed
-# straight into the LSTM decoder (nx = 128 + 7 = 135); the adapter and the
+# The 64-d daily embedding is concatenated to the 7 task forcings and fed
+# straight into the LSTM decoder (nx = 64 + 7 = 71); the adapter and the
 # residual-LSTM path are gone, and the 22 static attributes are loaded but
 # never reach the network. See ablation_mode in
 # src/dmg/models/neural_networks/embedding_finetuneing.py.
-#
 # Structurally this is the LSTMHBVPUB_PureSpatial baseline (CudnnLstm over
 # forcings + a basin-identity block -> HBV parameters) with the static
 # attribute block swapped for the embedding. That is the comparison it is
 # built for: does a learned daily embedding carry the basin information the
 # hand-picked Caravan attributes were supplying, given no adapter to
 # reconcile the two?
-#
 # The embedding stays daily here -- it is not collapsed to a per-basin vector
 # -- so it enters as a time-varying channel even though it is standing in for
 # static inputs.
@@ -40,7 +36,7 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
 data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_daily128_embedding.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_StefaLand256_condenser_daily64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -118,7 +114,7 @@ model:
     name: EmbeddingFinetuneing
     out_size: 1
 
-    embedding_size: 128
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 

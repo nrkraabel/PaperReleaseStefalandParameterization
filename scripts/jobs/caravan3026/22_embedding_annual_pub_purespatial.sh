@@ -15,8 +15,7 @@
 # file is only 145MB. See scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh for the
 # general per-holdout memory-growth rationale behind sizing these jobs
 # generously relative to file size.
-#
-# Depends on: scripts/data_prep/convert_caravan3026_task_station_schema.sh.
+# Depends on: the station-id schema fix.
 
 source "${DMG_ENV}/bin/activate"
 export PYTHONPATH="$PWD:$PYTHONPATH"

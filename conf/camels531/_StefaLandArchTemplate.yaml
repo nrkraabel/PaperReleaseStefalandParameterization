@@ -1,0 +1,37 @@
+# Architecture and checkpoint fields for generate_embeddings.py. Not a
+# runnable experiment config: it is loaded with plain OmegaConf, not Hydra.
+# The variable lists are read off StefaLandGlobal20.pt itself, from the
+# per-variable embedding submodule names, which is the only reliable source
+# for which variables the frozen encoder can load weights for. Taking them
+# from a training config instead gives a partial load with no error.
+model:
+  nn:
+    hidden_size: 256
+    num_heads: 4
+    num_enc_layers: 4
+    d_ffd: 512
+    dropout: 0.1
+
+    pretrained_type: stefaland_dec_lstm
+    pretrained_model: ${oc.env:DMG_CHECKPOINT_ROOT}/StefaLandGlobal20.pt
+
+    pretrained_time_series_vars: [P, RelHum, SWd, Tmax, Tmin]
+    pretrained_static_vars: [
+      ETPOT_Hargr, GMTED_aspectcosine, GMTED_elevation, GMTED_slope,
+      HWSD_clay, HWSD_gravel, HWSD_sand, HWSD_silt,
+      MODIS_NDVI, MSWEP_P, MSWX_LWd, MSWX_PET, MSWX_RH, MSWX_SWd,
+      MSWX_SpecHum, MSWX_Tmax, MSWX_Tmean, MSWX_Tmin, MSWX_Wind,
+      Permeability_no_permafrost,
+      SoilGrid2_bulk_density, SoilGrid2_clay, SoilGrid2_organic_carbon_stock,
+      SoilGrid2_sand, SoilGrid2_silt,
+      agriculture_fraction_2000, agriculture_fraction_2018,
+      carbonate_sedimentary_rocks_frac, catchsize,
+      forest_fraction_2000, forest_fraction_2018,
+      gdp_2000_buffer,
+      grassland_fraction_2000, grassland_fraction_2018,
+      intact_forest, meanP, meanTa,
+      population_density_2000_buffer, porosity,
+      seasonality_P, seasonality_PET,
+      snow_fraction, snowfall_fraction, soil_depth, soil_erosion, soil_moisture,
+      urban_fraction_2000, urban_fraction_2018,
+    ]

@@ -1,16 +1,13 @@
 # @package _global_
-#
 # CONTROL for the daily-embedding ablation set: no foundation model at all.
-#
-# The raw variables the MFFormer would have consumed are fed straight to the
+# The raw variables the StefaLand would have consumed are fed straight to the
 # residual adapter as additional time/static inputs beside the task's own
 # forcings/attributes. Nothing is encoded and no embedding file is read, so
 # the delta against EmbeddingDailyPUB_PureSpatial isolates what the pretrained
 # encoder contributes over its own inputs.
-#
 # Everything downstream of the adapter (dual_residual adapter, 256-wide
 # residual LSTM, projection) is held identical to that baseline, and d_model
-# is kept at 128 so the two are capacity-matched. See
+# is kept at 64 so the two are capacity-matched. See
 # src/dmg/models/neural_networks/raw_fm_inputs_finetuneing.py -- in particular
 # the note that the adapter's hidden/residual stream is zeros here, because no
 # hidden representation exists to refine.
@@ -38,7 +35,7 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
 data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
-# Same foundation-model-schema file MFFormerNoPretrainPUB_PureSpatial reads.
+# Same foundation-model-schema file StefaLandNoPretrainPUB_PureSpatial reads.
 # Allowed here for the same reason it is allowed there: this config is about
 # the foundation model's own variable set, not a task-native baseline. The
 # file has a correct station_ids coordinate and the exact
@@ -129,8 +126,8 @@ model:
 
     # Adapter/decoder width. No embedding is read -- this is named
     # 'embedding_size' only so it can be pinned to the daily-embedding
-    # baseline's 128 for a capacity-matched comparison.
-    embedding_size: 128
+    # baseline's 64 for a capacity-matched comparison.
+    embedding_size: 64
     dropout: 0.1
 
     # Identical to EmbeddingDailyPUB_PureSpatial's adapter and decoder.
@@ -168,8 +165,8 @@ model:
     # Foundation-model-side variables, read from pretrained_path. In
     # DirectFinetuneing these define the encoder's architecture; here they ARE
     # the additional adapter inputs -- the encoder is gone. Kept byte-identical
-    # to MFFormerNoPretrainPUB_PureSpatial's lists (the verified exact-match
-    # set for MfformerGlobal20.pt: 5 ts vars, 48 static vars, no Runoff) so
+    # to StefaLandNoPretrainPUB_PureSpatial's lists (the verified exact-match
+    # set for StefaLandGlobal20.pt: 5 ts vars, 48 static vars, no Runoff) so
     # this control sees precisely the variable set the FM line of work uses.
     pretrained_time_series_vars: [P, RelHum, SWd, Tmax, Tmin]
     pretrained_static_vars: [

@@ -20,10 +20,10 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
 data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
-# 128-dim, same width as daily/monthly for this project (unlike the
+# 64-dim, same width as daily/monthly for this project (unlike the
 # Camels531/Global3434 convention where annual condensers are 264-dim --
-# these Caravan3026 condenser jobs were all run with EMD_Size=128).
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_annual128_embedding.nc
+# these Caravan3026 condenser jobs were all run with EMD_Size=64).
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_StefaLand256_condenser_annual64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -109,7 +109,7 @@ model:
   nn:
     name: EmbeddingFinetuneing
     out_size: 1
-    embedding_size: 128
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 

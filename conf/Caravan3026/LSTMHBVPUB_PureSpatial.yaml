@@ -23,7 +23,7 @@ data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_si
 # pretrained_path == data_path deliberately: this is a non-foundation-model
 # baseline (differentiable HBV-LSTM), so nn forcings/attributes must come
 # from the task file's own native variables, never a foundation-model-schema
-# file (3026Carvan_refpoints.nc is reserved for the mfformer-no-pretrain
+# file (3026Carvan_refpoints.nc is reserved for the no-pretrain
 # config, which actually runs data through a foundation-model architecture).
 pretrained_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
 

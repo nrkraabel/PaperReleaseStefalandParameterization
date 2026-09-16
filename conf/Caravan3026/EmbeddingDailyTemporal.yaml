@@ -20,7 +20,7 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Caravan3026/
 data_path: ${oc.env:DMG_DATA_ROOT}/caravan_zenodo/OfficailCaravan_camels_only_singlefile_direct_dropHighNaNTrue_stationids.nc
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_MFFormer256_condenser_daily128_embedding.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Caravan3026_StefaLand256_condenser_daily64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -105,7 +105,7 @@ model:
     name: EmbeddingFinetuneing
     out_size: 1
 
-    embedding_size: 128
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 

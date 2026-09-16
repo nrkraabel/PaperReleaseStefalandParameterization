@@ -449,7 +449,7 @@ def main() -> None:
     num_enc_layers = nn_cfg.get('num_enc_layers', 4)
     d_ffd = nn_cfg.get('d_ffd', 512)
     dropout = nn_cfg.get('dropout', 0.1)
-    pretrained_type = nn_cfg.get('pretrained_type', 'stefaland_patch_tft')
+    pretrained_type = nn_cfg.get('pretrained_type', 'stefaland_dec_lstm')
 
     pretrain_data = args.pretrain_data or cfg.get('pretrained_path')
     if not pretrain_data:

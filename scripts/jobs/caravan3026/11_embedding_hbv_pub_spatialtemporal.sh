@@ -12,7 +12,7 @@
 #SBATCH --output=%x_%A_%a.out
 
 # See scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh for the 400GB/48h rationale.
-# Depends on: scripts/data_prep/convert_caravan3026_task_station_schema.sh.
+# Depends on: the station-id schema fix.
 
 source "${DMG_ENV}/bin/activate"
 export PYTHONPATH="$PWD:$PYTHONPATH"

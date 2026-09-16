@@ -7,7 +7,7 @@ Citations:
 - TFT: Lim et al. "Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting" ICLR 2021
 
 This file provides three distinct temporal encoding approaches optimized for daily time series data
-that can be used as drop-in replacements for standard PositionalEncoding in MFFormer.
+that can be used as drop-in replacements for standard PositionalEncoding in StefaLand.
 """
 
 import math

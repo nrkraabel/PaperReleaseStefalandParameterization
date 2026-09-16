@@ -13,9 +13,8 @@
 
 # Ablation: daily embedding fed to the LSTM as ordinary input channels in
 # place of the task's static attributes (ablation_mode: embedding_as_input).
-# LSTM nx = 128 embedding + 7 forcings; the 22 Caravan static attributes are
+# LSTM nx = 64 embedding + 7 forcings; the 22 Caravan static attributes are
 # loaded but never reach the network.
-#
 # Same 3-seed / 5-fold-PUB protocol and 400GB budget as the baseline
 # scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh.
 

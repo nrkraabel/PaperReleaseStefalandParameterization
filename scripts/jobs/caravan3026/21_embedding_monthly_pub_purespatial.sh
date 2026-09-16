@@ -16,8 +16,7 @@
 # scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh's comment describes is much
 # smaller here. Still generous relative to a non-spatial run since
 # run_spatial_testing() accumulates all 5 folds' predictions in memory.
-#
-# Depends on: scripts/data_prep/convert_caravan3026_task_station_schema.sh.
+# Depends on: the station-id schema fix.
 
 source "${DMG_ENV}/bin/activate"
 export PYTHONPATH="$PWD:$PYTHONPATH"

@@ -118,7 +118,7 @@ model:
     d_ffd: 512
 
     # Pretrained model configuration
-    pretrained_type: stefaland_patch_tft
+    pretrained_type: stefaland_dec_lstm
     freeze_pretrained: False
 
     # Adapter configuration

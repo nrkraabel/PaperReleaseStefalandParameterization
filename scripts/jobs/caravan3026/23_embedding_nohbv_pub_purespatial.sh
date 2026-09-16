@@ -18,8 +18,7 @@
 # LSTMNoHBVPUB_PureSpatial.yaml. See scripts/jobs/caravan3026/10_embedding_hbv_pub_purespatial.sh
 # for the 400GB/48h memory rationale (same embedding file, same PUB fold
 # accumulation cost).
-#
-# Depends on: scripts/data_prep/convert_caravan3026_task_station_schema.sh having
+# Depends on: the station-id schema fix having
 # completed (writes the station_ids-fixed task file this config's data_path
 # points to).
 

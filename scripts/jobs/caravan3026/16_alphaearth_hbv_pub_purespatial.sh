@@ -17,18 +17,16 @@
 # AlphaEarth features help on their own, with no foundation-model embedding
 # anywhere in the loop, which is what makes this directly comparable to
 # scripts/jobs/caravan3026/13_lstm_hbv_pub_purespatial.sh (identical in every other respect).
-#
 # 200GB rather than the baseline's 150GB: run_spatial_testing() rebuilds the
 # model/loader/trainer per holdout and accumulates every holdout's
 # predictions/targets, so per-holdout static-attribute cost matters -- and
 # this run carries 86 statics vs. the baseline's 22. That same jump from 47
 # to 111 statics is what pushed run_embedding_global3434_pub_40mfinalized_
 # alphaearth.sh from 120GB to 500GB.
-#
-# Depends on: scripts/data_prep/merge_alphaearth_caravan3026.sh having completed
+# Depends on: the AlphaEarth merge step having completed
 # (writes the ae_00..ae_63-augmented task file this config's data_path points
 # to), which in turn depends on
-# scripts/data_prep/convert_caravan3026_task_station_schema.sh.
+# the station-id schema fix.
 
 source "${DMG_ENV}/bin/activate"
 export PYTHONPATH="$PWD:$PYTHONPATH"

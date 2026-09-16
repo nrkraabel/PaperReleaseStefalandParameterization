@@ -1,15 +1,12 @@
 """
 Apply an already-trained condenser (see train_condensed_embedding.py) to a
 new raw foundation-model embedding file, producing a condensed embedding for
-every station in that file -- no streamflow target needed.
+every station in that file.
 
-The condenser's encoder never saw streamflow or forcings during training,
-only the raw embedding (see train_condensed_embedding.py's module
-docstring), so it generalizes to any station set with the same embedding
-dimension, gauged or not. This script is the pure-inference counterpart:
-load a checkpoint train_condensed_embedding.py produced, run its encoder
-over a (possibly much larger, possibly ungauged) embedding file, and write
-the result in the same station_ids x time x embed_dim NetCDF format
+The encoder only ever saw the raw embedding, so it generalizes to any
+station set with the same embedding dimension, gauged or not. Run it over
+a (possibly much larger) embedding file and write the result in the same
+station_ids x time x embed_dim NetCDF format
 generate_embeddings.py / train_condensed_embedding.py's --export_embedding
 already use.
 
@@ -57,11 +54,8 @@ def main() -> None:
     condenser = Condenser(ckpt['d_in'], ckpt['width']).to(device)
     condenser.encoder.load_state_dict(ckpt['encoder_state_dict'])
     condenser.eval()
-    mode = ckpt.get('mode', 'supervised')  # checkpoints predating recon-only mode were all supervised
-    print(f"Loaded {mode} condenser: {ckpt['d_in']} -> {ckpt['width']} "
-          f"(trained on {ckpt.get('source_embedding_nc', '?')}"
-          + (f" for task {ckpt.get('task_nc', '?')} / target '{ckpt.get('target_var', '?')}')"
-             if mode == 'supervised' else ", reconstruction loss only)"))
+    print(f"Loaded condenser: {ckpt['d_in']} -> {ckpt['width']} "
+          f"(trained on {ckpt.get('source_embedding_nc', '?')})")
 
     print(f"Opening embedding file {args.embedding_nc} ...")
     emb_ds, emb_var, emb_ids, emb_dates = open_embedding(args.embedding_nc, args.embedding_var_name)

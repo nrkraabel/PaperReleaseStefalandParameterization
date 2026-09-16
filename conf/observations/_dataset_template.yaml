@@ -1,7 +1,6 @@
 # Observations template -- copy to conf/observations/<my_dataset>.yaml, fill
 # in every <PLACEHOLDER>, and reference it from an experiment config's
 # defaults list as `- /observations: <my_dataset>`.
-#
 # Required file layouts are described in docs/embeddings/README.md.
 
 name: <my_dataset>

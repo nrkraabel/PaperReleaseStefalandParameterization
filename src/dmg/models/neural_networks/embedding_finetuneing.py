@@ -86,7 +86,7 @@ class EmbeddingFinetuneing(nn.Module):
         #       forcings as ordinary time-varying LSTM input channels, and the
         #       static attributes are dropped. Structurally this is the
         #       CudnnLstmModel baseline with its static-attribute block
-        #       replaced by the 128-d daily embedding, which is what makes it
+        #       replaced by the 64-d daily embedding, which is what makes it
         #       comparable to LSTMHBVPUB_*.
         #
         #

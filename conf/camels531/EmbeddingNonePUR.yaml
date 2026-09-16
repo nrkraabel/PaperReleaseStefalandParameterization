@@ -20,11 +20,10 @@ data_sampler: HydroSampler
 trainer: FinetuneTrainer
 save_path: ${oc.env:DMG_OUTPUT_ROOT}/Extended1980_1999_Camels531/EmbeddingNone/
 data_path: ${oc.env:DMG_DATA_ROOT}/Camels_Pretrain.nc
-pretrained_path: ${oc.env:DMG_DATA_ROOT}/CamelsPretrain/Camels_refpoints_1979_2014.nc
 # Same ICLMOfficial.pt (d_model=256) embeddings the primary Embedding row
 # uses -- this row isolates the effect of the adapter (adapter_type: none
 # below) rather than the choice of foundation model.
-embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Camels531Extended_ICLMOfficial256/Camels531Extended_ICLMOfficial256_embeddings_daily.nc
+embedding_path: ${oc.env:DMG_EMBEDDING_ROOT}/Condensers/Camels531_StefaLand256_condenser_daily64_embedding.nc
 
 
 ## Training ------------------------------#
@@ -107,7 +106,7 @@ model:
 
     # Must equal the last dim of the embedding variable in embedding_path
     # (256 for ICLMOfficial.pt).
-    embedding_size: 256
+    embedding_size: 64
     embedding_var_name: embedding
     dropout: 0.1
 
